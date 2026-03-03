@@ -1,0 +1,413 @@
+---
+title: 'registry_manager'
+description: 'Windows registry emulation with hive parsing and overlay support'
+---
+
+The `registry_manager` class provides Windows registry emulation by parsing real registry hive files and supporting runtime modifications through an overlay system.
+
+## Overview
+
+This class implements registry functionality by:
+
+- Parsing Windows registry hive files (NTUSER.DAT, SOFTWARE, SYSTEM, etc.)
+- Providing read access to registry keys and values
+- Supporting runtime modifications via an in-memory overlay
+- Path normalization and redirection
+- Serialization for state persistence
+- Type-safe value accessors
+
+## Constructors
+
+### Default Constructor
+
+```cpp
+registry_manager()
+```
+
+Creates a registry manager without loading any hives.
+
+### Hive Path Constructor
+
+```cpp
+registry_manager(const std::filesystem::path& hive_path)
+```
+
+<ParamField path="hive_path" type="const std::filesystem::path&">
+  Directory containing Windows registry hive files
+</ParamField>
+
+Automatically loads standard hives (SYSTEM, SOFTWARE, etc.) from the specified directory.
+
+## Destructor
+
+```cpp
+~registry_manager()
+```
+
+Cleans up all loaded hives and associated resources.
+
+## Move Semantics
+
+The class supports move construction and assignment but prohibits copying:
+
+```cpp
+registry_manager(registry_manager&&) noexcept
+registry_manager& operator=(registry_manager&&) noexcept
+
+registry_manager(const registry_manager&) = delete
+registry_manager& operator=(const registry_manager&) = delete
+```
+
+## Key Operations
+
+### get_key
+
+Retrieves a registry key by path.
+
+```cpp
+std::optional<registry_key> get_key(const utils::path_key& key)
+```
+
+<ParamField path="key" type="const utils::path_key&">
+  Full registry path (e.g., `HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft`)
+</ParamField>
+
+**Returns:** A `registry_key` object if found, or `std::nullopt` otherwise.
+
+**Example:**
+```cpp
+auto key = registry.get_key("HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion");
+```
+
+## Value Operations
+
+### get_value (by name)
+
+Retrieves a registry value by name.
+
+```cpp
+std::optional<registry_value> get_value(
+    const registry_key& key,
+    std::string_view name
+)
+```
+
+<ParamField path="key" type="const registry_key&">
+  The registry key containing the value
+</ParamField>
+
+<ParamField path="name" type="std::string_view">
+  Name of the value to retrieve (empty string for default value)
+</ParamField>
+
+**Returns:** A `registry_value` structure if found, or `std::nullopt` otherwise.
+
+### get_value (by index)
+
+Retrieves a registry value by enumeration index.
+
+```cpp
+std::optional<registry_value> get_value(
+    const registry_key& key,
+    size_t index
+)
+```
+
+<ParamField path="key" type="const registry_key&">
+  The registry key containing the value
+</ParamField>
+
+<ParamField path="index" type="size_t">
+  Zero-based index of the value to retrieve
+</ParamField>
+
+**Returns:** The value at the specified index, or `std::nullopt` if index is out of range.
+
+### set_value
+
+Writes a value to the registry overlay (runtime modifications only).
+
+```cpp
+void set_value(
+    const registry_key& key,
+    std::string name,
+    uint32_t type,
+    std::span<const std::byte> data
+)
+```
+
+<ParamField path="key" type="const registry_key&">
+  The registry key to write to
+</ParamField>
+
+<ParamField path="name" type="std::string">
+  Name of the value to set
+</ParamField>
+
+<ParamField path="type" type="uint32_t">
+  Registry value type (REG_SZ, REG_DWORD, etc.)
+</ParamField>
+
+<ParamField path="data" type="std::span<const std::byte>">
+  Raw value data
+</ParamField>
+
+**Note:** Changes are stored in memory and can be serialized for persistence.
+
+## Subkey Operations
+
+### get_sub_key_name
+
+Retrieves the name of a subkey by index.
+
+```cpp
+std::optional<std::string_view> get_sub_key_name(
+    const registry_key& key,
+    size_t index
+)
+```
+
+<ParamField path="key" type="const registry_key&">
+  The parent registry key
+</ParamField>
+
+<ParamField path="index" type="size_t">
+  Zero-based index of the subkey
+</ParamField>
+
+**Returns:** The subkey name if index is valid, or `std::nullopt` otherwise.
+
+## Advanced Access
+
+### get_hive_key
+
+Retrieves direct access to the underlying hive key structure.
+
+```cpp
+std::optional<exposed_hive_key> get_hive_key(const registry_key& key)
+```
+
+<ParamField path="key" type="const registry_key&">
+  The registry key to expose
+</ParamField>
+
+**Returns:** An `exposed_hive_key` structure containing:
+- `key`: Reference to the internal `hive_key` structure
+- `file`: Reference to the hive file stream
+
+**Note:** This is a low-level interface for direct hive manipulation.
+
+### read_u16string
+
+Reads a UTF-16 string value by index.
+
+```cpp
+std::optional<std::u16string> read_u16string(
+    const registry_key& key,
+    size_t index
+)
+```
+
+<ParamField path="key" type="const registry_key&">
+  The registry key containing the value
+</ParamField>
+
+<ParamField path="index" type="size_t">
+  Index of the string value
+</ParamField>
+
+**Returns:** The UTF-16 string if the value exists and is a string type.
+
+## Serialization
+
+### serialize_runtime_state
+
+```cpp
+void serialize_runtime_state(utils::buffer_serializer& buffer) const
+```
+
+<ParamField path="buffer" type="utils::buffer_serializer&">
+  Output buffer for serialized state
+</ParamField>
+
+Serializes runtime modifications (overlay values) to a buffer.
+
+### deserialize_runtime_state
+
+```cpp
+void deserialize_runtime_state(utils::buffer_deserializer& buffer)
+```
+
+<ParamField path="buffer" type="utils::buffer_deserializer&">
+  Input buffer containing serialized state
+</ParamField>
+
+Restores runtime modifications from a serialized buffer.
+
+## Data Structures
+
+### registry_key
+
+Represents a registry key handle.
+
+```cpp
+struct registry_key : ref_counted_object
+{
+    utils::path_key hive;  // Hive name (e.g., HKEY_LOCAL_MACHINE)
+    utils::path_key path;  // Key path within the hive
+    
+    std::u16string to_string() const;  // Full key path
+}
+```
+
+### registry_value
+
+Represents a registry value with type-safe accessors.
+
+```cpp
+struct registry_value
+{
+    uint32_t type;              // REG_* type constant
+    std::string_view name;      // Value name
+    std::span<const std::byte> data;  // Raw value data
+    
+    bool is_dword() const;
+    bool is_string() const;
+    
+    std::optional<DWORD> as_dword() const;
+    std::optional<std::u16string> as_string() const;
+}
+```
+
+**Type checking methods:**
+- `is_dword()`: Returns `true` if type is `REG_DWORD`
+- `is_string()`: Returns `true` if type is `REG_SZ`
+
+**Type conversion methods:**
+- `as_dword()`: Converts to `DWORD` if type matches
+- `as_string()`: Converts to UTF-16 string if type matches
+
+## Registry Type Constants
+
+```cpp
+REG_NONE                        // No value type
+REG_SZ                          // Unicode string
+REG_EXPAND_SZ                   // Expandable string
+REG_BINARY                      // Binary data
+REG_DWORD                       // 32-bit number
+REG_DWORD_LITTLE_ENDIAN         // 32-bit LE (same as REG_DWORD)
+REG_DWORD_BIG_ENDIAN            // 32-bit BE
+REG_LINK                        // Symbolic link
+REG_MULTI_SZ                    // Multiple strings
+REG_RESOURCE_LIST               // Resource list
+REG_FULL_RESOURCE_DESCRIPTOR    // Full resource descriptor
+REG_RESOURCE_REQUIREMENTS_LIST  // Resource requirements
+REG_QWORD                       // 64-bit number
+REG_QWORD_LITTLE_ENDIAN         // 64-bit LE (same as REG_QWORD)
+```
+
+## Usage Example
+
+```cpp
+#include <windows-emulator/registry/registry_manager.hpp>
+
+// Initialize with hive directory
+registry_manager registry("/path/to/windows/hives");
+
+// Read Windows version
+if (auto key = registry.get_key(
+    "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion")) {
+    
+    if (auto val = registry.get_value(*key, "ProductName")) {
+        if (auto product = val->as_string()) {
+            printf("Windows version: %ls\n", product->c_str());
+        }
+    }
+    
+    if (auto val = registry.get_value(*key, "CurrentBuildNumber")) {
+        if (auto build = val->as_string()) {
+            printf("Build: %ls\n", build->c_str());
+        }
+    }
+}
+
+// Enumerate subkeys
+if (auto key = registry.get_key("HKLM\\SOFTWARE\\Microsoft")) {
+    for (size_t i = 0; ; ++i) {
+        auto subkey_name = registry.get_sub_key_name(*key, i);
+        if (!subkey_name) break;
+        printf("Subkey: %s\n", subkey_name->data());
+    }
+}
+
+// Write a DWORD value to the overlay
+if (auto key = registry.get_key("HKLM\\SOFTWARE\\MyApp")) {
+    uint32_t value = 42;
+    auto data = std::as_bytes(std::span(&value, 1));
+    registry.set_value(*key, "Version", REG_DWORD, data);
+}
+
+// Read back the modified value
+if (auto key = registry.get_key("HKLM\\SOFTWARE\\MyApp")) {
+    if (auto val = registry.get_value(*key, "Version")) {
+        if (auto dword_val = val->as_dword()) {
+            printf("Version: %u\n", *dword_val);
+        }
+    }
+}
+
+// Enumerate all values in a key
+if (auto key = registry.get_key("HKCU\\Environment")) {
+    for (size_t i = 0; ; ++i) {
+        auto val = registry.get_value(*key, i);
+        if (!val) break;
+        
+        printf("%.*s = ", (int)val->name.size(), val->name.data());
+        
+        if (val->is_string()) {
+            if (auto str = val->as_string()) {
+                printf("%ls\n", str->c_str());
+            }
+        } else if (val->is_dword()) {
+            if (auto dw = val->as_dword()) {
+                printf("%u\n", *dw);
+            }
+        } else {
+            printf("(binary)\n");
+        }
+    }
+}
+
+// Serialize registry state
+utils::buffer_serializer serializer;
+registry.serialize_runtime_state(serializer);
+
+// Later, restore state
+utils::buffer_deserializer deserializer(serializer.get_buffer());
+registry.deserialize_runtime_state(deserializer);
+```
+
+## Path Normalization
+
+The registry manager automatically handles:
+
+- Case-insensitive key and value names
+- Path redirection (e.g., `HKLM` → `HKEY_LOCAL_MACHINE`)
+- Forward slash to backslash conversion
+- Leading/trailing slash removal
+
+## Standard Hive Mapping
+
+When initialized with a hive directory, the following files are loaded:
+
+- `SYSTEM` → `HKEY_LOCAL_MACHINE\SYSTEM`
+- `SOFTWARE` → `HKEY_LOCAL_MACHINE\SOFTWARE`
+- `NTUSER.DAT` → `HKEY_CURRENT_USER`
+- `SAM` → `HKEY_LOCAL_MACHINE\SAM`
+- `SECURITY` → `HKEY_LOCAL_MACHINE\SECURITY`
+
+## See Also
+
+- [process_context](/api/process-context) - Uses registry for system configuration
+- [windows_emulator](/api/windows-emulator) - Main emulator with registry support
+- [file_system](/api/file-system) - Related virtual file system

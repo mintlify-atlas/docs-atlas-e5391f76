@@ -1,0 +1,536 @@
+---
+title: 'memory_manager'
+description: 'Virtual memory allocation and protection management'
+---
+
+The `memory_manager` class implements Windows-style virtual memory management with support for reserving, committing, protecting, and releasing memory regions.
+
+## Overview
+
+This class provides comprehensive memory management that mirrors Windows virtual memory semantics:
+
+- Reserve/commit two-phase allocation model
+- Memory protection and permissions
+- Section views and image mappings
+- Memory-mapped I/O (MMIO) regions
+- 64KB allocation granularity
+- Address space layout versioning
+- Serialization support for snapshots
+
+## Constructor
+
+```cpp
+memory_manager(memory_interface& memory)
+```
+
+<ParamField path="memory" type="memory_interface&">
+  Reference to the underlying memory backend
+</ParamField>
+
+## Memory Constants
+
+```cpp
+ALLOCATION_GRANULARITY      = 0x10000         // 64KB
+MIN_ALLOCATION_ADDRESS      = 0x10000         // 64KB
+MAX_ALLOCATION_ADDRESS      = 0x7FFFFFFEFFFF  // 128TB - 64KB
+DEFAULT_ALLOCATION_ADDRESS_64BIT = 0x100000000  // 4GB
+DEFAULT_ALLOCATION_ADDRESS_32BIT = 0x10000      // 64KB
+```
+
+## Core Memory Operations
+
+### read_memory
+
+Reads memory from the virtual address space.
+
+```cpp
+void read_memory(uint64_t address, void* data, size_t size) const final
+```
+
+<ParamField path="address" type="uint64_t">
+  Virtual address to read from
+</ParamField>
+
+<ParamField path="data" type="void*">
+  Destination buffer
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Number of bytes to read
+</ParamField>
+
+**Throws:** Exception if the memory region is not accessible.
+
+### try_read_memory
+
+Attempts to read memory without throwing exceptions.
+
+```cpp
+bool try_read_memory(uint64_t address, void* data, size_t size) const final
+```
+
+**Returns:** `true` if successful, `false` if the read failed.
+
+### write_memory
+
+Writes memory to the virtual address space.
+
+```cpp
+void write_memory(uint64_t address, const void* data, size_t size) final
+```
+
+<ParamField path="address" type="uint64_t">
+  Virtual address to write to
+</ParamField>
+
+<ParamField path="data" type="const void*">
+  Source buffer
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Number of bytes to write
+</ParamField>
+
+**Throws:** Exception if the memory region is not writable.
+
+### try_write_memory
+
+Attempts to write memory without throwing exceptions.
+
+```cpp
+bool try_write_memory(uint64_t address, const void* data, size_t size) final
+```
+
+**Returns:** `true` if successful, `false` if the write failed.
+
+## Allocation and Deallocation
+
+### allocate_memory (at specific address)
+
+Allocates memory at a specific virtual address.
+
+```cpp
+bool allocate_memory(
+    uint64_t address,
+    size_t size,
+    nt_memory_permission permissions,
+    bool reserve_only = false,
+    memory_region_kind kind = memory_region_kind::private_allocation
+)
+```
+
+<ParamField path="address" type="uint64_t">
+  Desired allocation address (must be aligned to 64KB)
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Size in bytes to allocate
+</ParamField>
+
+<ParamField path="permissions" type="nt_memory_permission">
+  Initial memory protection flags
+</ParamField>
+
+<ParamField path="reserve_only" type="bool" default="false">
+  If `true`, only reserve the address space without committing
+</ParamField>
+
+<ParamField path="kind" type="memory_region_kind" default="private_allocation">
+  Type of memory region to create
+</ParamField>
+
+**Returns:** `true` if allocation succeeded, `false` otherwise.
+
+### allocate_memory (find free address)
+
+Allocates memory at an automatically chosen address.
+
+```cpp
+uint64_t allocate_memory(
+    size_t size,
+    nt_memory_permission permissions,
+    bool reserve_only = false,
+    uint64_t start = 0,
+    memory_region_kind kind = memory_region_kind::private_allocation
+)
+```
+
+<ParamField path="size" type="size_t">
+  Size in bytes to allocate
+</ParamField>
+
+<ParamField path="permissions" type="nt_memory_permission">
+  Initial memory protection flags
+</ParamField>
+
+<ParamField path="reserve_only" type="bool" default="false">
+  If `true`, only reserve the address space
+</ParamField>
+
+<ParamField path="start" type="uint64_t" default="0">
+  Minimum address to start searching from
+</ParamField>
+
+<ParamField path="kind" type="memory_region_kind" default="private_allocation">
+  Type of memory region to create
+</ParamField>
+
+**Returns:** Base address of the allocated region, or 0 on failure.
+
+### commit_memory
+
+Commits previously reserved memory, making it accessible.
+
+```cpp
+bool commit_memory(
+    uint64_t address,
+    size_t size,
+    nt_memory_permission permissions
+)
+```
+
+<ParamField path="address" type="uint64_t">
+  Base address to commit
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Number of bytes to commit
+</ParamField>
+
+<ParamField path="permissions" type="nt_memory_permission">
+  Memory protection flags for committed pages
+</ParamField>
+
+**Returns:** `true` if successful, `false` otherwise.
+
+### decommit_memory
+
+Decommits memory, freeing physical backing but retaining the reservation.
+
+```cpp
+bool decommit_memory(uint64_t address, size_t size)
+```
+
+<ParamField path="address" type="uint64_t">
+  Base address to decommit
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Number of bytes to decommit
+</ParamField>
+
+**Returns:** `true` if successful, `false` otherwise.
+
+### release_memory
+
+Releases a memory allocation completely.
+
+```cpp
+bool release_memory(uint64_t address, size_t size)
+```
+
+<ParamField path="address" type="uint64_t">
+  Base address of the allocation to release
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Size of the region to release
+</ParamField>
+
+**Returns:** `true` if successful, `false` otherwise.
+
+### unmap_all_memory
+
+Unmaps all allocated memory regions.
+
+```cpp
+void unmap_all_memory()
+```
+
+## Memory Protection
+
+### protect_memory
+
+Changes the protection flags for a memory region.
+
+```cpp
+bool protect_memory(
+    uint64_t address,
+    size_t size,
+    nt_memory_permission permissions,
+    nt_memory_permission* old_permissions = nullptr
+)
+```
+
+<ParamField path="address" type="uint64_t">
+  Base address of the region
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Size of the region
+</ParamField>
+
+<ParamField path="permissions" type="nt_memory_permission">
+  New protection flags
+</ParamField>
+
+<ParamField path="old_permissions" type="nt_memory_permission*" default="nullptr">
+  Optional output parameter to receive previous permissions
+</ParamField>
+
+**Returns:** `true` if successful, `false` otherwise.
+
+## Memory-Mapped I/O
+
+### allocate_mmio
+
+Allocates a memory-mapped I/O region with custom read/write callbacks.
+
+```cpp
+bool allocate_mmio(
+    uint64_t address,
+    size_t size,
+    mmio_read_callback read_cb,
+    mmio_write_callback write_cb
+)
+```
+
+<ParamField path="address" type="uint64_t">
+  Virtual address for the MMIO region
+</ParamField>
+
+<ParamField path="size" type="size_t">
+  Size of the MMIO region
+</ParamField>
+
+<ParamField path="read_cb" type="mmio_read_callback">
+  Callback invoked on reads: `void(uint64_t addr, void* data, size_t size)`
+</ParamField>
+
+<ParamField path="write_cb" type="mmio_write_callback">
+  Callback invoked on writes: `void(uint64_t addr, const void* data, size_t size)`
+</ParamField>
+
+**Returns:** `true` if allocation succeeded, `false` otherwise.
+
+## Region Queries
+
+### get_region_info
+
+Retrieves detailed information about a memory region.
+
+```cpp
+region_info get_region_info(uint64_t address)
+```
+
+<ParamField path="address" type="uint64_t">
+  Address within the region to query
+</ParamField>
+
+**Returns:** A `region_info` structure containing:
+- `allocation_base`: Base address of the allocation
+- `allocation_length`: Total allocation size
+- `is_reserved`: Whether the region is reserved
+- `is_committed`: Whether the region is committed
+- `initial_permissions`: Original protection flags
+- `kind`: Type of memory region
+
+### find_free_allocation_base
+
+Finds a free address range suitable for allocation.
+
+```cpp
+uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const
+```
+
+<ParamField path="size" type="size_t">
+  Required size for the allocation
+</ParamField>
+
+<ParamField path="start" type="uint64_t" default="0">
+  Minimum address to start searching from
+</ParamField>
+
+**Returns:** Base address for the allocation, or 0 if no space found.
+
+### overlaps_reserved_region
+
+Checks if an address range overlaps with any reserved region.
+
+```cpp
+bool overlaps_reserved_region(uint64_t address, size_t size) const
+```
+
+**Returns:** `true` if the range overlaps, `false` otherwise.
+
+### get_region_kind
+
+Retrieves the kind of memory region at an address.
+
+```cpp
+memory_region_kind get_region_kind(uint64_t address) const
+```
+
+**Returns:** The memory region kind enumeration value.
+
+## Address Space Management
+
+### get_default_allocation_address
+
+```cpp
+std::uint64_t get_default_allocation_address() const
+```
+
+**Returns:** The default base address for automatic allocations.
+
+### set_default_allocation_address
+
+```cpp
+void set_default_allocation_address(std::uint64_t address)
+```
+
+<ParamField path="address" type="uint64_t">
+  New default allocation address
+</ParamField>
+
+### get_layout_version
+
+```cpp
+std::uint64_t get_layout_version() const
+```
+
+**Returns:** A version number that increments whenever the memory layout changes.
+
+### get_reserved_regions
+
+```cpp
+const reserved_region_map& get_reserved_regions() const
+```
+
+**Returns:** Map of all reserved memory regions.
+
+## Serialization
+
+### serialize_memory_state
+
+```cpp
+void serialize_memory_state(
+    utils::buffer_serializer& buffer,
+    bool is_snapshot
+) const
+```
+
+<ParamField path="buffer" type="utils::buffer_serializer&">
+  Output buffer for serialized data
+</ParamField>
+
+<ParamField path="is_snapshot" type="bool">
+  Whether this is a snapshot (affects what gets serialized)
+</ParamField>
+
+### deserialize_memory_state
+
+```cpp
+void deserialize_memory_state(
+    utils::buffer_deserializer& buffer,
+    bool is_snapshot
+)
+```
+
+## Statistics
+
+### compute_memory_stats
+
+```cpp
+memory_stats compute_memory_stats() const
+```
+
+**Returns:** A `memory_stats` structure containing:
+- `reserved_memory`: Total bytes reserved
+- `committed_memory`: Total bytes committed
+
+## Enumerations
+
+### memory_region_kind
+
+```cpp
+enum class memory_region_kind : uint8_t
+{
+    free,                 // Not allocated
+    private_allocation,   // Standard heap/stack allocation
+    section_view,         // Mapped section view
+    section_image,        // Mapped PE image section
+    mmio,                 // Memory-mapped I/O
+}
+```
+
+## Usage Example
+
+```cpp
+#include <windows-emulator/memory_manager.hpp>
+
+memory_interface backend;
+memory_manager mem(backend);
+
+// Allocate 1MB of read-write memory
+auto addr = mem.allocate_memory(
+    0x100000,  // 1MB
+    nt_memory_permission::read_write
+);
+
+if (addr) {
+    // Write to allocated memory
+    uint64_t value = 0x1234567890ABCDEF;
+    mem.write_memory(addr, &value, sizeof(value));
+    
+    // Read it back
+    uint64_t read_value = 0;
+    mem.read_memory(addr, &read_value, sizeof(read_value));
+    
+    // Change protection to read-only
+    mem.protect_memory(addr, 0x100000, nt_memory_permission::read);
+    
+    // Query region info
+    auto info = mem.get_region_info(addr);
+    printf("Allocation base: 0x%llx\n", info.allocation_base);
+    printf("Is committed: %d\n", info.is_committed);
+    
+    // Release when done
+    mem.release_memory(addr, 0x100000);
+}
+
+// Reserve address space without committing
+auto reserved = mem.allocate_memory(
+    0x200000,  // 2MB
+    nt_memory_permission::read_write,
+    true  // reserve_only
+);
+
+if (reserved) {
+    // Commit part of it later
+    mem.commit_memory(reserved, 0x1000, nt_memory_permission::read_write);
+}
+
+// Set up MMIO region
+mem.allocate_mmio(
+    0xF0000000,
+    0x1000,
+    [](uint64_t addr, void* data, size_t size) {
+        // Handle reads
+    },
+    [](uint64_t addr, const void* data, size_t size) {
+        // Handle writes
+    }
+);
+
+// Get memory statistics
+auto stats = mem.compute_memory_stats();
+printf("Reserved: %llu bytes\n", stats.reserved_memory);
+printf("Committed: %llu bytes\n", stats.committed_memory);
+```
+
+## See Also
+
+- [memory_interface](/api/memory-interface) - Low-level memory backend interface
+- [process_context](/api/process-context) - Process memory structures
+- [windows_emulator](/api/windows-emulator) - Main emulator using memory_manager

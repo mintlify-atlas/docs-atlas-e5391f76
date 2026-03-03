@@ -1,0 +1,218 @@
+---
+title: 'logger'
+description: 'Colored console logging with formatting support'
+---
+
+The `logger` class provides console output with color support and formatted printing capabilities for debugging and diagnostics.
+
+## Overview
+
+This class extends `generic_logger` to provide:
+
+- Colored console output with multiple severity levels
+- Printf-style formatted printing with type safety
+- Output control for suppressing logs
+- Cross-platform terminal color support
+- Forced printing that bypasses output controls
+
+## Constructor & Destructor
+
+```cpp
+logger()
+~logger() override
+```
+
+On Windows, the constructor saves the current console code page and sets UTF-8 mode. The destructor restores the original code page.
+
+## Methods
+
+### print (string_view)
+
+Prints a message with the specified color.
+
+```cpp
+void print(color c, std::string_view message) override
+```
+
+<ParamField path="c" type="color">
+  The color to use for the output
+</ParamField>
+
+<ParamField path="message" type="std::string_view">
+  The message to print
+</ParamField>
+
+### print (formatted)
+
+Prints a formatted message with the specified color using printf-style formatting.
+
+```cpp
+void print(color c, const char* message, ...) override
+```
+
+<ParamField path="c" type="color">
+  The color to use for the output
+</ParamField>
+
+<ParamField path="message" type="const char*">
+  Printf-style format string
+</ParamField>
+
+<ParamField path="..." type="variadic">
+  Arguments matching the format string
+</ParamField>
+
+**Note:** This method respects the output disabled flag.
+
+### force_print
+
+Prints a formatted message that bypasses the output disabled flag.
+
+```cpp
+void force_print(color c, const char* message, ...)
+```
+
+<ParamField path="c" type="color">
+  The color to use for the output
+</ParamField>
+
+<ParamField path="message" type="const char*">
+  Printf-style format string
+</ParamField>
+
+<ParamField path="..." type="variadic">
+  Arguments matching the format string
+</ParamField>
+
+### Severity-Specific Methods
+
+Convenience methods for common logging levels.
+
+#### info
+
+```cpp
+void info(const char* message, ...) const
+```
+
+Logs informational messages in cyan.
+
+#### warn
+
+```cpp
+void warn(const char* message, ...) const
+```
+
+Logs warning messages in yellow.
+
+#### error
+
+```cpp
+void error(const char* message, ...) const
+```
+
+Logs error messages in red.
+
+#### success
+
+```cpp
+void success(const char* message, ...) const
+```
+
+Logs success messages in green.
+
+#### log
+
+```cpp
+void log(const char* message, ...) const
+```
+
+Logs general messages in white.
+
+### Output Control
+
+#### disable_output
+
+```cpp
+void disable_output(const bool value)
+```
+
+Enables or disables console output.
+
+<ParamField path="value" type="bool">
+  `true` to disable output, `false` to enable
+</ParamField>
+
+**Note:** The `force_print` method bypasses this setting.
+
+#### is_output_disabled
+
+```cpp
+bool is_output_disabled() const
+```
+
+**Returns:** `true` if output is currently disabled, `false` otherwise.
+
+## Color Enum
+
+Available colors for terminal output:
+
+```cpp
+enum class color
+{
+    black,
+    red,
+    green,
+    yellow,
+    blue,
+    cyan,
+    pink,
+    white,
+    gray,
+    dark_gray,
+}
+```
+
+## Usage Example
+
+```cpp
+#include <windows-emulator/logger.hpp>
+
+logger log;
+
+// Basic colored output
+log.print(color::green, "Emulator started\n");
+
+// Formatted output
+log.info("Loading module at 0x%llx", base_address);
+log.warn("Syscall %d not fully implemented", syscall_number);
+log.error("Failed to allocate %zu bytes", size);
+log.success("Process initialized with PID %d", pid);
+
+// Conditional logging
+if (verbose_mode) {
+    log.log("Thread %d entering syscall", thread_id);
+}
+
+// Disable output temporarily
+log.disable_output(true);
+log.info("This won't be printed");
+log.force_print(color::red, "But this will be!");
+log.disable_output(false);
+
+// Check output state
+if (!log.is_output_disabled()) {
+    log.print(color::cyan, "Output is enabled\n");
+}
+```
+
+## Platform Notes
+
+- **Windows:** Automatically manages console code page for UTF-8 support
+- **Unix/Linux:** Uses ANSI escape codes for color output
+- Format string safety is enforced via compiler attributes on GCC/Clang
+
+## See Also
+
+- [windows_emulator](/api/windows-emulator) - Main emulator class that uses logger
+- [process_context](/api/process-context) - Process state management
+- [syscall_dispatcher](/api/syscall-dispatcher) - System call handling

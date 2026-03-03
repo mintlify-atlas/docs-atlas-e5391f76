@@ -490,6 +490,122 @@ auto emu = std::make_unique<x86_64_emulator>();
 windows_emulator win_emu(std::move(emu), {}, callbacks);
 ```
 
+## Module Management Callbacks
+
+These callbacks are inherited from `module_manager::callbacks` and track DLL loading/unloading.
+
+### on_module_load
+
+Called when a module (DLL or EXE) is loaded into memory.
+
+```cpp
+utils::callback_list<void(mapped_module& mod)> on_module_load
+```
+
+<ParamField path="mod" type="mapped_module&">
+  Reference to the loaded module
+</ParamField>
+
+**Example:**
+```cpp
+callbacks.on_module_load = [](mapped_module& mod) {
+    std::cout << "Module loaded: " << mod.name 
+              << " at 0x" << std::hex << mod.image_base << std::endl;
+};
+```
+
+### on_module_unload
+
+Called when a module is unloaded from memory.
+
+```cpp
+utils::callback_list<void(mapped_module& mod)> on_module_unload
+```
+
+<ParamField path="mod" type="mapped_module&">
+  Reference to the module being unloaded
+</ParamField>
+
+## Thread Management Callbacks
+
+These callbacks are inherited from `process_context::callbacks` and track thread lifecycle.
+
+### on_thread_create
+
+Called when a new thread is created.
+
+```cpp
+utils::optional_function<void(handle h, emulator_thread& thr)> on_thread_create
+```
+
+<ParamField path="h" type="handle">
+  Handle to the new thread
+</ParamField>
+
+<ParamField path="thr" type="emulator_thread&">
+  Reference to the new thread object
+</ParamField>
+
+**Example:**
+```cpp
+callbacks.on_thread_create = [](handle h, emulator_thread& thr) {
+    std::cout << "Thread created: ID " << thr.id 
+              << ", Handle " << h.value << std::endl;
+};
+```
+
+### on_thread_terminated
+
+Called when a thread terminates.
+
+```cpp
+utils::optional_function<void(handle h, emulator_thread& thr)> on_thread_terminated
+```
+
+<ParamField path="h" type="handle">
+  Handle to the terminated thread
+</ParamField>
+
+<ParamField path="thr" type="emulator_thread&">
+  Reference to the terminated thread object
+</ParamField>
+
+### on_thread_switch
+
+Called when the emulator switches between threads (context switch).
+
+```cpp
+utils::optional_function<void(emulator_thread& current_thread, emulator_thread& new_thread)> on_thread_switch
+```
+
+<ParamField path="current_thread" type="emulator_thread&">
+  Thread being switched away from
+</ParamField>
+
+<ParamField path="new_thread" type="emulator_thread&">
+  Thread being switched to
+</ParamField>
+
+**Example:**
+```cpp
+callbacks.on_thread_switch = [](emulator_thread& current, emulator_thread& next) {
+    std::cout << "Context switch: Thread " << current.id 
+              << " -> Thread " << next.id << std::endl;
+};
+```
+
+### on_thread_set_name
+
+Called when a thread's name is set (via SetThreadDescription or similar).
+
+```cpp
+utils::optional_function<void(emulator_thread& current_thread)> on_thread_set_name
+```
+
+<ParamField path="current_thread" type="emulator_thread&">
+  Thread whose name was set
+</ParamField>
+
 ## Performance Considerations
 
 - Callbacks like `on_instruction` are called very frequently and can significantly impact performance
@@ -497,11 +613,13 @@ windows_emulator win_emu(std::move(emu), {}, callbacks);
 - Avoid heavy I/O operations in hot-path callbacks
 - Use filtering in callbacks to minimize overhead
 - Consider batching output instead of printing on every callback
+- Thread callbacks (`on_thread_switch`) can be called frequently in multi-threaded programs
 
 ## Notes
 
 - All callbacks are optional (can be left unset/null)
 - Callbacks are synchronous and block emulation
 - Return values (like in `on_syscall`) control emulator behavior
-- Some callbacks inherit from `module_manager::callbacks` and `process_context::callbacks`
+- `emulator_callbacks` inherits from both `module_manager::callbacks` and `process_context::callbacks`
 - UTF-16 strings (std::u16string_view) are used for Windows path/name parameters
+- Module and thread callbacks use `callback_list` or `optional_function` for multiple subscribers

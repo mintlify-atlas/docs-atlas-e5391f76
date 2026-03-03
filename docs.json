@@ -76,6 +76,9 @@
           {
             "group": "Components",
             "pages": [
+              "api/logger",
+              "api/memory-manager",
+              "api/registry-manager",
               "api/process-context",
               "api/module-manager",
               "api/syscall-dispatcher",
