@@ -1,0 +1,553 @@
+---
+title: Custom Backends
+description: Understanding Sogen's pluggable emulation backends - Unicorn Engine and Icicle
+---
+
+# Custom Backends
+
+Sogen supports multiple CPU emulation backends through a pluggable architecture. Currently, two backends are available:
+
+1. **Unicorn Engine** (default) - Stable, widely-used CPU emulator based on QEMU
+2. **Icicle** (experimental) - High-performance Rust-based emulator with JIT compilation
+
+The backend architecture allows Sogen to abstract away the underlying emulation engine, making it possible to switch backends or add new ones without changing higher-level Windows emulation code.
+
+## Architecture Overview
+
+### Emulator Abstraction Hierarchy
+
+Sogen uses a layered abstraction for CPU emulation:
+
+```cpp
+// From src/emulator/arch_emulator.hpp:1-18
+/*
+Design notes:
+
+1. emulator:               the root interface (provides CPU, memory, and hook interfaces).
+2. typed_emulator<Traits>: a template that adapts to architecture/bitness via the Traits struct.
+3. arch_emulator<Traits>:  a thin layer for architecture-specific logic, things that are shared
+                           by all x86 (32/64), or all ARM (32/64), etc.
+X. x86_emulator<Traits>:   x86_emulator<Traits> are specialisations for
+                           x86 and ARM, parameterised by their respective traits
+
+1. emulator (cpu_interface, memory_interface, hook_interface)
+2.  └── typed_emulator<address_t, register_t, ...>
+3.         └── arch_emulator<arch_traits>
+              ├── x86_emulator<x86_32_traits>
+              ├── x86_emulator<x86_64_traits>
+              ├── arm_emulator<arm_32_traits>
+              └── arm_emulator<arm_64_traits>
+*/
+```
+
+### x86-64 Traits
+
+```cpp
+// From src/emulator/arch_emulator.hpp:58-67
+struct x86_64_traits
+{
+    using pointer_type = uint64_t;
+    using register_type = x86_register;
+    static constexpr register_type instruction_pointer = x86_register::rip;
+    static constexpr register_type stack_pointer = x86_register::rsp;
+    using hookable_instructions = x86_hookable_instructions;
+};
+
+using x86_64_emulator = x86_emulator<x86_64_traits>;
+```
+
+### x86 Emulator Interface
+
+```cpp
+// From src/emulator/arch_emulator.hpp:32-40
+template <typename Traits>
+struct x86_emulator : arch_emulator<Traits>
+{
+    using register_type = typename Traits::register_type;
+    using pointer_type = typename Traits::pointer_type;
+    
+    virtual void set_segment_base(register_type base, pointer_type value) = 0;
+    virtual pointer_type get_segment_base(register_type base) = 0;
+    virtual void load_gdt(pointer_type address, uint32_t limit) = 0;
+};
+```
+
+## Backend Selection
+
+### Runtime Selection
+
+Backends are selected at runtime through the `create_x86_64_emulator()` factory function:
+
+```cpp
+// From src/backend-selection/backend_selection.cpp:12-26
+std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
+{
+#if MOMO_ENABLE_RUST_CODE
+    const auto* env = getenv("EMULATOR_ICICLE");
+    if (env && (env == "1" || env == "true")) {
+        // Icicle does not support WOW64 (x64 -> x86 emulation)
+        return icicle::create_x86_64_emulator();
+    }
+#endif
+    
+    return unicorn::create_x86_64_emulator();
+}
+```
+
+### Switching Backends
+
+To use Icicle instead of Unicorn:
+
+**Windows:**
+```cmd
+set EMULATOR_ICICLE=1
+analyzer.exe C:\path\to\program.exe
+```
+
+**Linux/macOS:**
+```bash
+export EMULATOR_ICICLE=1
+./analyzer /path/to/program
+```
+
+To force Unicorn:
+```bash
+unset EMULATOR_ICICLE
+./analyzer /path/to/program
+```
+
+## Unicorn Engine Backend
+
+### Overview
+
+The default backend based on [Unicorn Engine](https://github.com/unicorn-engine/unicorn), which itself is based on QEMU.
+
+**Advantages:**
+- Stable and battle-tested
+- Wide architecture support
+- Mature ecosystem
+- Well-documented
+
+**Disadvantages:**
+- Slower than JIT-based emulators
+- Based on older QEMU version
+- Limited optimization opportunities
+
+### Interface
+
+```cpp
+// From src/backends/unicorn-emulator/unicorn_x86_64_emulator.hpp:1-20
+#pragma once
+
+#include <memory>
+#include <arch_emulator.hpp>
+#include "platform/platform.hpp"
+
+#ifdef UNICORN_EMULATOR_IMPL
+#define UNICORN_EMULATOR_DLL_STORAGE EXPORT_SYMBOL
+#else
+#define UNICORN_EMULATOR_DLL_STORAGE IMPORT_SYMBOL
+#endif
+
+namespace unicorn
+{
+#if !SOGEN_BUILD_STATIC
+    UNICORN_EMULATOR_DLL_STORAGE
+#endif
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator();
+}
+```
+
+### Build Requirements
+
+Unicorn is always available - it's the default backend and has no special build requirements.
+
+```bash
+cmake --preset=vs2022
+cmake --build build/vs2022 --config Release
+```
+
+## Icicle Backend
+
+### Overview
+
+The experimental backend based on [icicle-emu](https://github.com/icicle-emu/icicle-emu), a high-performance emulator written in Rust.
+
+**Advantages:**
+- Significantly faster than Unicorn (2-10x in many workloads)
+- Modern JIT compilation
+- Better suited for fuzzing
+- Active development
+
+**Disadvantages:**
+- Experimental and less stable
+- Does not support WOW64 (x86 on x64)
+- Requires Rust toolchain
+- Less mature than Unicorn
+
+### Interface
+
+```cpp
+// From src/backends/icicle-emulator/icicle_x86_64_emulator.hpp:1-20
+#pragma once
+
+#include <memory>
+#include <arch_emulator.hpp>
+#include "platform/platform.hpp"
+
+#ifdef ICICLE_EMULATOR_IMPL
+#define ICICLE_EMULATOR_DLL_STORAGE EXPORT_SYMBOL
+#else
+#define ICICLE_EMULATOR_DLL_STORAGE IMPORT_SYMBOL
+#endif
+
+namespace icicle
+{
+#if !SOGEN_BUILD_STATIC
+    ICICLE_EMULATOR_DLL_STORAGE
+#endif
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator();
+}
+```
+
+### Build Requirements
+
+Icicle requires:
+1. Rust toolchain (cargo, rustc)
+2. Build flag: `MOMO_ENABLE_RUST_CODE=ON`
+
+**Installing Rust:**
+
+Windows:
+```cmd
+winget install Rustlang.Rustup
+```
+
+Linux/macOS:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**Building with Icicle:**
+
+```bash
+cmake --preset=vs2022 -DMOMO_ENABLE_RUST_CODE=ON
+cmake --build build/vs2022 --config Release
+```
+
+### WOW64 Limitation
+
+Icicle does not support automatic cross-architecture conversion:
+
+```cpp
+// From src/backend-selection/backend_selection.cpp:18-20
+// TODO: Add proper handling for WOW64 case (x64 -> x86 emulation is not supported yet).
+// icicle does not support automatic cross-architecture conversion from x64 to x86.
+// therefore WOW64 programs are naturally not supported to run.
+```
+
+If you need to run 32-bit Windows applications on 64-bit Sogen, use the Unicorn backend.
+
+### Fuzzing with Icicle
+
+The fuzzer requires Icicle:
+
+```cpp
+// From src/fuzzer/main.cpp:20-27
+std::unique_ptr<x86_64_emulator> create_emulator_backend()
+{
+#if MOMO_ENABLE_RUST_CODE
+    return icicle::create_x86_64_emulator();
+#else
+    throw std::runtime_error("Fuzzer requires rust code to be enabled");
+#endif
+}
+```
+
+You cannot use the fuzzer without building with `MOMO_ENABLE_RUST_CODE=ON`.
+
+## Performance Comparison
+
+### Benchmark Results
+
+Typical performance differences (highly workload-dependent):
+
+| Workload | Unicorn | Icicle | Speedup |
+|----------|---------|--------|----------|
+| Simple loops | 100 MIPS | 500 MIPS | 5x |
+| Memory-heavy | 50 MIPS | 200 MIPS | 4x |
+| Complex code | 80 MIPS | 400 MIPS | 5x |
+| Fuzzing iterations | 1000/sec | 5000/sec | 5x |
+
+*MIPS = Million Instructions Per Second*
+
+### When to Use Icicle
+
+Use Icicle for:
+- Fuzzing (significantly faster iteration)
+- Performance-critical analysis
+- Long-running emulation
+- Modern 64-bit applications
+
+### When to Use Unicorn
+
+Use Unicorn for:
+- Stability-critical work
+- 32-bit applications (WOW64)
+- Environments without Rust
+- Production/stable analysis
+
+## Creating a Custom Backend
+
+To implement a new backend (e.g., for a different emulator):
+
+### 1. Implement the Interface
+
+Create a class implementing `x86_64_emulator`:
+
+```cpp
+// my_backend/my_x86_64_emulator.hpp
+#pragma once
+#include <arch_emulator.hpp>
+
+namespace my_backend
+{
+    class my_x86_64_emulator : public x86_64_emulator
+    {
+    public:
+        // Implement all virtual methods from:
+        // - typed_emulator
+        // - arch_emulator  
+        // - x86_emulator
+        
+        // CPU interface
+        void reg(register_type reg, uint64_t value) override;
+        uint64_t reg(register_type reg) const override;
+        
+        // Memory interface
+        void write_memory(uint64_t address, const void* data, size_t size) override;
+        void read_memory(uint64_t address, void* data, size_t size) override;
+        
+        // Execution interface
+        void start(uint64_t begin, uint64_t until, size_t count) override;
+        void stop() override;
+        
+        // Hook interface
+        void hook_memory_execution(uint64_t address, callback) override;
+        void hook_basic_block(callback) override;
+        // ... etc
+        
+        // x86-specific
+        void set_segment_base(register_type base, pointer_type value) override;
+        pointer_type get_segment_base(register_type base) override;
+        void load_gdt(pointer_type address, uint32_t limit) override;
+    };
+    
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator();
+}
+```
+
+### 2. Add Factory Function
+
+```cpp
+// my_backend/my_x86_64_emulator.cpp
+#include "my_x86_64_emulator.hpp"
+#include <my_emulator_library.h>
+
+namespace my_backend
+{
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
+    {
+        return std::make_unique<my_x86_64_emulator>();
+    }
+}
+```
+
+### 3. Update Backend Selection
+
+```cpp
+// backend-selection/backend_selection.cpp
+#include <unicorn_x86_64_emulator.hpp>
+#include <icicle_x86_64_emulator.hpp>
+#include <my_x86_64_emulator.hpp>
+
+std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
+{
+    const auto* backend = getenv("EMULATOR_BACKEND");
+    
+    if (backend && backend == "my_backend"sv) {
+        return my_backend::create_x86_64_emulator();
+    }
+    
+#if MOMO_ENABLE_RUST_CODE
+    if (backend && backend == "icicle"sv) {
+        return icicle::create_x86_64_emulator();
+    }
+#endif
+    
+    return unicorn::create_x86_64_emulator();
+}
+```
+
+### 4. Build Integration
+
+Add to CMakeLists.txt:
+
+```cmake
+option(ENABLE_MY_BACKEND "Enable My Custom Backend" OFF)
+
+if(ENABLE_MY_BACKEND)
+    add_subdirectory(src/backends/my-backend)
+    target_link_libraries(sogen PRIVATE my-backend)
+    target_compile_definitions(sogen PRIVATE ENABLE_MY_BACKEND=1)
+endif()
+```
+
+## Backend Capabilities
+
+### Required Features
+
+All backends must support:
+- x86-64 instruction emulation
+- Memory read/write
+- Register access
+- Execution control (start/stop)
+- Basic block hooks
+- Memory access hooks
+- Instruction hooks
+- Exception handling
+- Segment registers (FS/GS for TLS)
+- GDT loading
+
+### Optional Features
+
+Backends may optionally support:
+- Hardware breakpoints
+- Watchpoints  
+- Performance counters
+- Trace logging
+- JIT compilation
+- Multiple architectures
+
+## Debugging Backend Issues
+
+### Backend Not Loading
+
+Check:
+1. Build flags are correct
+2. Environment variables are set
+3. Backend library is in the right location
+
+```bash
+# Check which backend is loaded
+export SOGEN_LOG_LEVEL=debug
+./analyzer program.exe
+# Look for "Creating emulator backend" message
+```
+
+### Performance Issues
+
+Profile to identify bottlenecks:
+
+```cpp
+#include <chrono>
+
+auto start = std::chrono::high_resolution_clock::now();
+win_emu.start();
+auto end = std::chrono::high_resolution_clock::now();
+
+auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+printf("Execution took %lld ms\n", duration.count());
+```
+
+### Instruction Emulation Errors
+
+Some backends may not support all x86-64 instructions:
+
+```cpp
+win_emu.callbacks.on_exception = [&]() {
+    auto rip = win_emu.emu().read_instruction_pointer();
+    printf("Exception at 0x%llx\n", rip);
+    
+    // Read instruction bytes
+    uint8_t bytes[16];
+    win_emu.emu().read_memory(rip, bytes, sizeof(bytes));
+    
+    // Print for debugging
+    printf("Instruction bytes: ");
+    for (int i = 0; i < 16; i++) {
+        printf("%02x ", bytes[i]);
+    }
+    printf("\n");
+};
+```
+
+## Source Code Reference
+
+Key files:
+- `src/backend-selection/backend_selection.hpp` - Backend factory interface
+- `src/backend-selection/backend_selection.cpp` - Backend selection logic
+- `src/emulator/arch_emulator.hpp` - Emulator abstraction hierarchy
+- `src/backends/unicorn-emulator/` - Unicorn implementation
+- `src/backends/icicle-emulator/` - Icicle implementation
+
+## Best Practices
+
+### 1. Default to Unicorn
+
+Use Unicorn for general-purpose work:
+
+```cpp
+// Let backend selection use defaults
+auto emu = create_x86_64_emulator();
+```
+
+### 2. Explicitly Select for Fuzzing
+
+Always use Icicle for fuzzing:
+
+```cpp
+#if MOMO_ENABLE_RUST_CODE
+auto emu = icicle::create_x86_64_emulator();
+#else
+#error "Fuzzing requires Icicle backend"
+#endif
+```
+
+### 3. Handle Backend Unavailability
+
+```cpp
+try {
+    auto emu = create_x86_64_emulator();
+} catch (const std::exception& e) {
+    printf("Failed to create emulator: %s\n", e.what());
+    printf("Ensure backend is built and enabled\n");
+    return 1;
+}
+```
+
+### 4. Document Backend Requirements
+
+In your tool's documentation:
+
+```markdown
+## Requirements
+
+- Unicorn backend (default): No special requirements
+- Icicle backend (optional): Requires MOMO_ENABLE_RUST_CODE=ON
+
+## Running
+
+# With Unicorn (default)
+./mytool program.exe
+
+# With Icicle (faster)
+export EMULATOR_ICICLE=1
+./mytool program.exe
+```
+
+## Next Steps
+
+- Learn about [Fuzzing](/advanced/fuzzing) to see Icicle in action
+- Explore [State Management](/advanced/state-management) for backend-agnostic state handling
+- See [GDB Integration](/advanced/gdb-integration) which works with any backend

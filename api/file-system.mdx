@@ -1,0 +1,295 @@
+---
+title: 'file_system'
+description: 'Virtual file system for Windows path translation and drive emulation'
+---
+
+The `file_system` class provides a virtual file system layer that translates Windows paths to host filesystem paths, enabling safe and controlled file access in the emulator.
+
+## Overview
+
+This class provides:
+
+- Windows-to-host path translation
+- Drive letter emulation
+- Path sandboxing to prevent escape attacks
+- Custom path mappings
+- Cross-platform support (Windows and Unix hosts)
+
+## Constructor
+
+```cpp
+file_system(const std::filesystem::path& root)
+```
+
+<ParamField path="root" type="const std::filesystem::path&">
+  Root directory for the virtual file system. All Windows paths will be resolved relative to this directory.
+</ParamField>
+
+On Windows hosts, if `root` is empty, the file system operates in passthrough mode, allowing direct access to the real Windows file system.
+
+## Methods
+
+### list_drives
+
+Lists available drive letters.
+
+```cpp
+std::set<char> list_drives() const
+```
+
+**Returns:** Set of lowercase drive letters (e.g., {'c', 'd', 'e'}).
+
+**Behavior:**
+- On Windows with empty root: Returns actual system drives via `GetLogicalDrives()`
+- Otherwise: Returns subdirectories in the root that are single characters
+
+### translate
+
+Translates a Windows path to a host filesystem path.
+
+```cpp
+std::filesystem::path translate(const windows_path& win_path) const
+```
+
+<ParamField path="win_path" type="const windows_path&">
+  Windows path to translate (must be absolute)
+</ParamField>
+
+**Returns:** Corresponding host filesystem path.
+
+**Throws:** `std::runtime_error` if the path is not absolute.
+
+**Translation process:**
+1. Check custom mappings first
+2. On Windows with empty root: Return path as-is
+3. Otherwise: Map to `<root>/<drive>/<path>`
+4. Prevent directory traversal attacks by checking for escape sequences
+
+### map
+
+Creates a custom path mapping.
+
+```cpp
+void map(windows_path src, std::filesystem::path dest)
+```
+
+<ParamField path="src" type="windows_path">
+  Source Windows path
+</ParamField>
+
+<ParamField path="dest" type="std::filesystem::path">
+  Destination host path
+</ParamField>
+
+Mappings take precedence over default translation rules. This is useful for:
+- Redirecting system directories
+- Mapping specific files to host locations
+- Creating virtual files or directories
+
+### access_mapped_entries
+
+Iterates over mapped entries within a directory.
+
+```cpp
+template <typename F>
+void access_mapped_entries(
+    const windows_path& win_path,
+    const F& accessor
+) const
+```
+
+<ParamField path="win_path" type="const windows_path&">
+  Directory path to search
+</ParamField>
+
+<ParamField path="accessor" type="const F&">
+  Callback function invoked for each mapped child entry
+</ParamField>
+
+The accessor receives a `std::pair<const windows_path&, const std::filesystem::path&>` for each mapping.
+
+## Static Methods
+
+### is_escaping_relative_path
+
+Checks if a relative path attempts to escape its parent directory.
+
+```cpp
+static bool is_escaping_relative_path(
+    const std::filesystem::path& p
+)
+```
+
+<ParamField path="p" type="const std::filesystem::path&">
+  Path to check
+</ParamField>
+
+**Returns:** `true` if the path is empty or starts with "..".
+
+### is_subpath
+
+Checks if a path is a subpath of a root directory.
+
+```cpp
+static bool is_subpath(
+    const std::filesystem::path& normal_root,
+    const std::filesystem::path& normal_target
+)
+```
+
+<ParamField path="normal_root" type="const std::filesystem::path&">
+  Normalized root path
+</ParamField>
+
+<ParamField path="normal_target" type="const std::filesystem::path&">
+  Normalized target path to check
+</ParamField>
+
+**Returns:** `true` if `normal_target` is within `normal_root`.
+
+This method is used internally to prevent directory traversal attacks.
+
+## Usage Examples
+
+### Basic Usage
+
+```cpp
+// Create a file system rooted at /tmp/windows
+file_system fs("/tmp/windows");
+
+// Translate a Windows path
+windows_path win_path(LR"(C:\Windows\System32\kernel32.dll)");
+auto host_path = fs.translate(win_path);
+// Result: /tmp/windows/c/Windows/System32/kernel32.dll
+
+// List available drives
+for (char drive : fs.list_drives()) {
+    printf("Drive %c: is available\n", drive);
+}
+```
+
+### Custom Mappings
+
+```cpp
+file_system fs("/tmp/windows");
+
+// Map Windows system directory to a specific host location
+fs.map(
+    windows_path(LR"(C:\Windows\System32)"),
+    "/usr/share/sogen/system32"
+);
+
+// Now this path will be redirected
+auto path = fs.translate(windows_path(LR"(C:\Windows\System32\ntdll.dll)"));
+// Result: /usr/share/sogen/system32/ntdll.dll
+```
+
+### Windows Host Passthrough
+
+```cpp
+// On Windows, empty root enables passthrough mode
+file_system fs("");
+
+auto path = fs.translate(windows_path(LR"(C:\Windows\System32\kernel32.dll)"));
+// Result: C:\Windows\System32\kernel32.dll (unchanged)
+
+auto drives = fs.list_drives();
+// Returns actual system drives: {'c', 'd', 'e', ...}
+```
+
+### Directory Enumeration with Mappings
+
+```cpp
+file_system fs("/tmp/windows");
+
+// Create some mappings
+fs.map(windows_path(LR"(C:\Program Files\App1)"), "/opt/app1");
+fs.map(windows_path(LR"(C:\Program Files\App2)"), "/opt/app2");
+
+// Access mapped children
+fs.access_mapped_entries(
+    windows_path(LR"(C:\Program Files)"),
+    [](const auto& mapping) {
+        const auto& [win_path, host_path] = mapping;
+        printf("%s -> %s\n",
+               win_path.string().c_str(),
+               host_path.string().c_str());
+    }
+);
+// Output:
+// C:\Program Files\App1 -> /opt/app1
+// C:\Program Files\App2 -> /opt/app2
+```
+
+### Security: Preventing Path Traversal
+
+```cpp
+file_system fs("/tmp/windows");
+
+// Attempting to escape the sandbox
+try {
+    windows_path malicious(LR"(C:\..\..\..\etc\passwd)");
+    auto path = fs.translate(malicious);
+    // The translation normalizes the path and prevents escape
+    // Result will be clamped to /tmp/windows/c/
+} catch (const std::exception& e) {
+    printf("Error: %s\n", e.what());
+}
+```
+
+## Directory Structure Example
+
+For a file system rooted at `/tmp/windows`, the directory structure would be:
+
+```
+/tmp/windows/
+├── c/                    # C: drive
+│   ├── Windows/
+│   │   ├── System32/
+│   │   └── SysWOW64/
+│   ├── Program Files/
+│   └── Users/
+├── d/                    # D: drive (if present)
+│   └── Data/
+└── e/                    # E: drive (if present)
+    └── Backup/
+```
+
+Drive letters correspond to single-character subdirectories.
+
+## Integration Example
+
+```cpp
+class windows_emulator
+{
+    file_system fs_;
+    module_manager modules_;
+
+public:
+    windows_emulator(const std::filesystem::path& root)
+        : fs_(root),
+          modules_(memory_, fs_, module_callbacks_)
+    {
+        // Map common Windows directories
+        fs_.map(
+            windows_path(LR"(C:\Windows\System32)"),
+            root / "system32"
+        );
+        fs_.map(
+            windows_path(LR"(C:\Windows\SysWOW64)"),
+            root / "syswow64"
+        );
+    }
+
+    void load_module(const windows_path& path)
+    {
+        // Module manager uses file system for path resolution
+        modules_.map_module(path, logger_);
+    }
+};
+```
+
+## See Also
+
+- [module_manager](/api/module-manager) - Uses file_system for DLL resolution
+- [process_context](/api/process-context) - Uses file_system during setup

@@ -1,0 +1,320 @@
+---
+title: Configuration
+description: Configure the Sogen emulator with custom settings, path mappings, and port mappings
+---
+
+Sogen provides extensive configuration options to customize the emulation environment. Settings can be configured through command-line arguments or programmatically when using Sogen as a library.
+
+## Emulator Settings
+
+The `emulator_settings` structure controls core emulator behavior:
+
+### Basic Settings
+
+```cpp
+struct emulator_settings
+{
+    bool disable_logging{false};
+    bool use_relative_time{false};
+    
+    std::filesystem::path emulation_root{};
+    std::filesystem::path registry_directory{"./registry"};
+    
+    std::unordered_map<uint16_t, uint16_t> port_mappings{};
+    std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+};
+```
+
+#### disable_logging
+
+Disables all logging output from the emulator.
+
+```cpp
+emulator_settings settings;
+settings.disable_logging = true;
+```
+
+Command-line equivalent: `-s` or `--silent`
+
+#### use_relative_time
+
+Uses instruction count instead of wall-clock time for deterministic execution.
+
+```cpp
+settings.use_relative_time = true;
+```
+
+Command-line equivalent: `-rep` or `--reproducible`
+
+<Note>
+Relative time mode is essential for reproducible malware analysis and debugging race conditions.
+</Note>
+
+#### emulation_root
+
+Base directory for the virtual Windows filesystem:
+
+```cpp
+settings.emulation_root = "/path/to/windows/root";
+```
+
+Command-line equivalent: `-e /path/to/windows/root`
+
+The emulation root should contain a typical Windows directory structure:
+```
+emulation-root/
+├── Windows/
+│   ├── System32/
+│   └── SysWOW64/
+├── Program Files/
+└── Users/
+```
+
+#### registry_directory
+
+Path to the registry hive directory:
+
+```cpp
+settings.registry_directory = "./my-registry";
+```
+
+Command-line equivalent: `-r ./my-registry`
+
+## Application Settings
+
+The `application_settings` structure defines the target program and its execution environment:
+
+```cpp
+struct application_settings
+{
+    windows_path application{};
+    windows_path working_directory{};
+    std::vector<std::u16string> arguments{};
+};
+```
+
+### application
+
+Path to the executable to run (Windows-style path):
+
+```cpp
+application_settings app_settings;
+app_settings.application = "C:\\program.exe";
+```
+
+### working_directory
+
+Working directory for the process. If not specified, defaults to the executable's directory:
+
+```cpp
+app_settings.working_directory = "C:\\Users\\User\\Documents";
+```
+
+### arguments
+
+Command-line arguments passed to the program:
+
+```cpp
+app_settings.arguments = {u"--verbose", u"input.txt"};
+```
+
+## Path Mappings
+
+Path mappings allow you to redirect Windows paths to specific host filesystem locations. This is useful for:
+- Analyzing samples without copying them into the emulation root
+- Providing custom configuration files
+- Isolating specific directories
+
+### Programmatic Configuration
+
+```cpp
+emulator_settings settings;
+
+// Map Windows path to host path
+settings.path_mappings["C:\\sample.exe"] = "/home/user/samples/malware.exe";
+settings.path_mappings["C:\\config.ini"] = "/home/user/configs/test.ini";
+```
+
+### Command-Line Configuration
+
+```bash
+analyzer.exe \
+  -p "c:/sample.exe" "/home/user/malware.exe" \
+  -p "c:/config.ini" "./test-config.ini" \
+  c:/sample.exe
+```
+
+The syntax is: `-p <windows-path> <host-path> [program]`
+
+### Path Mapping Example
+
+<Steps>
+
+### Create sample directory structure
+
+```bash
+mkdir -p ./analysis/samples
+mkdir -p ./analysis/configs
+```
+
+### Place your files
+
+```bash
+cp suspicious.exe ./analysis/samples/
+cp custom-config.ini ./analysis/configs/
+```
+
+### Run with path mappings
+
+```bash
+analyzer.exe \
+  -e ./emulation-root \
+  -p "c:/malware.exe" "./analysis/samples/suspicious.exe" \
+  -p "c:/config.ini" "./analysis/configs/custom-config.ini" \
+  c:/malware.exe
+```
+
+</Steps>
+
+## Port Mappings
+
+Port mappings redirect network connections from emulator ports to different host ports. This allows:
+- Multiple emulator instances on one host
+- Routing traffic to specific network services
+- Testing network isolation
+
+### Programmatic Configuration
+
+```cpp
+emulator_settings settings;
+
+// Map emulator port 80 to host port 8080
+settings.port_mappings[80] = 8080;
+settings.port_mappings[443] = 8443;
+```
+
+### Runtime Port Mapping
+
+You can also map ports at runtime:
+
+```cpp
+windows_emulator emu(create_x86_64_emulator(), settings);
+
+// Map port 80 to 8080
+emu.map_port(80, 8080);
+
+// Get the host port for emulator port 80
+uint16_t host_port = emu.get_host_port(80); // Returns 8080
+
+// Get the emulator port for host port 8080  
+uint16_t emu_port = emu.get_emulator_port(8080); // Returns 80
+```
+
+### Port Mapping Use Cases
+
+<CodeGroup>
+
+```cpp title="Redirect HTTP to alternate port"
+emulator_settings settings;
+settings.port_mappings[80] = 8080;
+settings.port_mappings[443] = 8443;
+```
+
+```cpp title="Isolate multiple instances"
+// Instance 1
+emulator_settings settings1;
+settings1.port_mappings[53] = 5301;  // DNS
+settings1.port_mappings[80] = 8001;  // HTTP
+
+// Instance 2  
+emulator_settings settings2;
+settings2.port_mappings[53] = 5302;
+settings2.port_mappings[80] = 8002;
+```
+
+</CodeGroup>
+
+## Complete Configuration Example
+
+```cpp
+#include <windows_emulator.hpp>
+#include <backend_selection.hpp>
+
+int main()
+{
+    // Configure emulator settings
+    emulator_settings settings{
+        .use_relative_time = true,
+        .emulation_root = "./windows-root",
+        .registry_directory = "./registry",
+        .port_mappings = {{80, 8080}, {443, 8443}},
+        .path_mappings = {
+            {"C:\\sample.exe", "./samples/malware.exe"},
+            {"C:\\config.ini", "./configs/test.ini"}
+        }
+    };
+    
+    // Configure application
+    application_settings app_settings{
+        .application = "C:\\sample.exe",
+        .working_directory = "C:\\Users\\User",
+        .arguments = {u"--verbose", u"--config", u"C:\\config.ini"}
+    };
+    
+    // Create emulator
+    auto emu = std::make_unique<windows_emulator>(
+        create_x86_64_emulator(),
+        std::move(app_settings),
+        settings
+    );
+    
+    // Run the emulation
+    emu->start();
+    
+    return 0;
+}
+```
+
+## Registry Configuration
+
+Sogen requires a Windows registry dump to function properly. The registry provides:
+- System configuration
+- Installed software information
+- User profiles
+- Windows version details
+
+### Creating a Registry Dump
+
+<Steps>
+
+### Run grab-registry.bat as Administrator
+
+On a Windows system, run the provided batch file:
+
+```bash
+grab-registry.bat
+```
+
+This exports the necessary registry hives.
+
+### Copy to your project
+
+```bash
+cp -r registry ./my-project/registry
+```
+
+### Configure Sogen to use it
+
+```bash
+analyzer.exe -r ./my-project/registry myapp.exe
+```
+
+</Steps>
+
+### Registry Path Substitution
+
+Sogen automatically performs registry path substitution:
+- `CurrentControlSet` → `ControlSet001`
+- `ActiveComputerName` → `ComputerName`
+
+This ensures compatibility with exported registry hives.

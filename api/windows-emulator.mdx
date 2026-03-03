@@ -1,0 +1,440 @@
+---
+title: 'windows_emulator'
+description: 'Main Windows emulator class that provides full Windows user-space emulation'
+---
+
+## Overview
+
+The `windows_emulator` class is the primary interface for Windows user-space emulation. It manages the entire emulation environment including memory, processes, threads, file system, registry, and network operations.
+
+## Constructor
+
+```cpp
+windows_emulator(
+    std::unique_ptr<x86_64_emulator> emu,
+    const emulator_settings& settings = {},
+    emulator_callbacks callbacks = {},
+    emulator_interfaces interfaces = {}
+)
+```
+
+Creates a new Windows emulator instance.
+
+<ParamField path="emu" type="std::unique_ptr<x86_64_emulator>" required>
+  The underlying x86-64 CPU emulator instance
+</ParamField>
+
+<ParamField path="settings" type="const emulator_settings&" default="{}">
+  Configuration settings for the emulator
+</ParamField>
+
+<ParamField path="callbacks" type="emulator_callbacks" default="{}">
+  Event callbacks for monitoring emulation events
+</ParamField>
+
+<ParamField path="interfaces" type="emulator_interfaces" default="{}">
+  Optional custom implementations for clock and socket factory
+</ParamField>
+
+### Alternative Constructor with Application
+
+```cpp
+windows_emulator(
+    std::unique_ptr<x86_64_emulator> emu,
+    application_settings app_settings,
+    const emulator_settings& settings = {},
+    emulator_callbacks callbacks = {},
+    emulator_interfaces interfaces = {}
+)
+```
+
+Creates a new Windows emulator with application settings.
+
+<ParamField path="app_settings" type="application_settings" required>
+  Application configuration including path, working directory, and arguments
+</ParamField>
+
+## Public Members
+
+The `windows_emulator` class exposes several public components:
+
+<ParamField path="callbacks" type="emulator_callbacks">
+  Event callbacks for monitoring emulation behavior
+</ParamField>
+
+<ParamField path="log" type="logger">
+  Logging interface for emulation events
+</ParamField>
+
+<ParamField path="file_sys" type="file_system">
+  Virtual file system manager
+</ParamField>
+
+<ParamField path="memory" type="memory_manager">
+  Memory management interface
+</ParamField>
+
+<ParamField path="registry" type="registry_manager">
+  Windows registry manager
+</ParamField>
+
+<ParamField path="version" type="windows_version_manager">
+  Windows version information manager
+</ParamField>
+
+<ParamField path="mod_manager" type="module_manager">
+  Module/DLL loading and management
+</ParamField>
+
+<ParamField path="process" type="process_context">
+  Process and thread context information
+</ParamField>
+
+<ParamField path="dispatcher" type="syscall_dispatcher">
+  System call dispatcher
+</ParamField>
+
+## Methods
+
+### emu()
+
+```cpp
+x86_64_emulator& emu()
+const x86_64_emulator& emu() const
+```
+
+Returns a reference to the underlying CPU emulator.
+
+**Returns:** Reference to the x86-64 emulator instance
+
+**Source:** windows_emulator.hpp:116
+
+### clock()
+
+```cpp
+utils::clock& clock()
+const utils::clock& clock() const
+```
+
+Returns a reference to the emulator's clock.
+
+**Returns:** Reference to the clock interface
+
+**Source:** windows_emulator.hpp:126
+
+### socket_factory()
+
+```cpp
+network::socket_factory& socket_factory()
+const network::socket_factory& socket_factory() const
+```
+
+Returns a reference to the socket factory for network operations.
+
+**Returns:** Reference to the socket factory
+
+**Source:** windows_emulator.hpp:136
+
+### current_thread()
+
+```cpp
+emulator_thread& current_thread() const
+```
+
+Returns the currently active emulator thread.
+
+**Returns:** Reference to the active thread
+
+**Throws:** `std::runtime_error` if no active thread exists
+
+**Source:** windows_emulator.hpp:146
+
+### get_executed_instructions()
+
+```cpp
+uint64_t get_executed_instructions() const
+```
+
+Returns the total number of instructions executed.
+
+**Returns:** Count of executed instructions
+
+**Source:** windows_emulator.hpp:156
+
+### setup_process_if_necessary()
+
+```cpp
+void setup_process_if_necessary()
+```
+
+Initializes the process environment if not already set up.
+
+**Source:** windows_emulator.hpp:161
+
+### start()
+
+```cpp
+void start(size_t count = 0)
+```
+
+Starts or resumes emulation.
+
+<ParamField path="count" type="size_t" default="0">
+  Number of instructions to execute. 0 means run indefinitely until stopped.
+</ParamField>
+
+**Source:** windows_emulator.hpp:163
+
+### stop()
+
+```cpp
+void stop()
+```
+
+Stops the emulation.
+
+**Source:** windows_emulator.hpp:164
+
+### serialize() / deserialize()
+
+```cpp
+void serialize(utils::buffer_serializer& buffer) const
+void deserialize(utils::buffer_deserializer& buffer)
+```
+
+Serializes or deserializes the emulator state.
+
+<ParamField path="buffer" type="utils::buffer_serializer&" required>
+  Buffer to serialize to or deserialize from
+</ParamField>
+
+**Source:** windows_emulator.hpp:166
+
+### save_snapshot() / restore_snapshot()
+
+```cpp
+void save_snapshot()
+void restore_snapshot()
+```
+
+Saves or restores a snapshot of the emulator state for quick rollback.
+
+**Source:** windows_emulator.hpp:169
+
+### Port Mapping Methods
+
+#### get_host_port()
+
+```cpp
+uint16_t get_host_port(const uint16_t emulator_port) const
+```
+
+Returns the host port mapped to an emulator port.
+
+<ParamField path="emulator_port" type="uint16_t" required>
+  The port number in the emulator
+</ParamField>
+
+**Returns:** The mapped host port, or the emulator port if no mapping exists
+
+**Source:** windows_emulator.hpp:172
+
+#### get_emulator_port()
+
+```cpp
+uint16_t get_emulator_port(const uint16_t host_port) const
+```
+
+Returns the emulator port mapped to a host port.
+
+<ParamField path="host_port" type="uint16_t" required>
+  The port number on the host
+</ParamField>
+
+**Returns:** The mapped emulator port, or the host port if no mapping exists
+
+**Source:** windows_emulator.hpp:183
+
+#### map_port()
+
+```cpp
+void map_port(const uint16_t emulator_port, const uint16_t host_port)
+```
+
+Creates a port mapping between emulator and host.
+
+<ParamField path="emulator_port" type="uint16_t" required>
+  The port number in the emulator
+</ParamField>
+
+<ParamField path="host_port" type="uint16_t" required>
+  The port number on the host
+</ParamField>
+
+**Source:** windows_emulator.hpp:196
+
+### Thread Management
+
+#### yield_thread()
+
+```cpp
+void yield_thread(bool alertable = false)
+```
+
+Yields execution of the current thread.
+
+<ParamField path="alertable" type="bool" default="false">
+  Whether the thread should be alertable during yield
+</ParamField>
+
+**Source:** windows_emulator.hpp:211
+
+#### perform_thread_switch()
+
+```cpp
+bool perform_thread_switch()
+```
+
+Performs a thread context switch if one is pending.
+
+**Returns:** `true` if a thread switch occurred, `false` otherwise
+
+**Source:** windows_emulator.hpp:212
+
+#### activate_thread()
+
+```cpp
+bool activate_thread(uint32_t id)
+```
+
+Activates a thread by its ID.
+
+<ParamField path="id" type="uint32_t" required>
+  The thread ID to activate
+</ParamField>
+
+**Returns:** `true` if activation succeeded, `false` otherwise
+
+**Source:** windows_emulator.hpp:213
+
+## Supporting Types
+
+### emulator_settings
+
+```cpp
+struct emulator_settings {
+    bool disable_logging{false};
+    bool use_relative_time{false};
+    std::filesystem::path emulation_root{};
+    std::filesystem::path registry_directory{"./registry"};
+    std::unordered_map<uint16_t, uint16_t> port_mappings{};
+    std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+};
+```
+
+Configuration settings for the emulator.
+
+<ParamField path="disable_logging" type="bool" default="false">
+  Disable logging output
+</ParamField>
+
+<ParamField path="use_relative_time" type="bool" default="false">
+  Use relative time instead of system time
+</ParamField>
+
+<ParamField path="emulation_root" type="std::filesystem::path" default="">
+  Root directory for emulation environment
+</ParamField>
+
+<ParamField path="registry_directory" type="std::filesystem::path" default="./registry">
+  Directory containing registry hives
+</ParamField>
+
+<ParamField path="port_mappings" type="std::unordered_map<uint16_t, uint16_t>" default="{}">
+  Port number mappings between emulator and host
+</ParamField>
+
+<ParamField path="path_mappings" type="std::unordered_map<windows_path, std::filesystem::path>" default="{}">
+  Path mappings between Windows and host paths
+</ParamField>
+
+### application_settings
+
+```cpp
+struct application_settings {
+    windows_path application{};
+    windows_path working_directory{};
+    std::vector<std::u16string> arguments{};
+};
+```
+
+Settings for the application to run in the emulator.
+
+<ParamField path="application" type="windows_path" required>
+  Path to the executable to run
+</ParamField>
+
+<ParamField path="working_directory" type="windows_path">
+  Working directory for the application
+</ParamField>
+
+<ParamField path="arguments" type="std::vector<std::u16string>">
+  Command-line arguments for the application
+</ParamField>
+
+### emulator_interfaces
+
+```cpp
+struct emulator_interfaces {
+    std::unique_ptr<utils::clock> clock{};
+    std::unique_ptr<network::socket_factory> socket_factory{};
+};
+```
+
+Optional custom interface implementations.
+
+<ParamField path="clock" type="std::unique_ptr<utils::clock>">
+  Custom clock implementation (defaults to system clock)
+</ParamField>
+
+<ParamField path="socket_factory" type="std::unique_ptr<network::socket_factory>">
+  Custom socket factory implementation
+</ParamField>
+
+## Usage Example
+
+```cpp
+#include <windows-emulator/windows_emulator.hpp>
+
+// Create emulator with application settings
+application_settings app_settings{
+    .application = L"C:\\Windows\\System32\\notepad.exe",
+    .working_directory = L"C:\\Users\\User",
+    .arguments = {L"notepad.exe", L"test.txt"}
+};
+
+emulator_settings settings{
+    .disable_logging = false,
+    .emulation_root = "./emulation",
+    .registry_directory = "./registry"
+};
+
+emulator_callbacks callbacks;
+callbacks.on_syscall = [](uint32_t id, std::string_view name) {
+    printf("Syscall: %s (0x%x)\n", name.data(), id);
+    return instruction_hook_continuation::run_instruction;
+};
+
+auto emu = std::make_unique<x86_64_emulator>();
+windows_emulator win_emu(std::move(emu), app_settings, settings, callbacks);
+
+// Start emulation
+win_emu.start();
+```
+
+## Notes
+
+- The `windows_emulator` class is non-copyable and non-movable
+- The destructor automatically cleans up all resources
+- Thread switching is managed automatically during emulation
+- Snapshots allow for quick state rollback without full serialization overhead

@@ -1,0 +1,550 @@
+---
+title: Installation
+description: Build Sogen from source on Windows, Linux, macOS, and other platforms
+---
+
+## Overview
+
+Sogen is built using CMake and supports a wide variety of platforms and compilers. This guide covers building from source on different operating systems.
+
+## System Requirements
+
+### All Platforms
+
+- **CMake**: 3.26.4 or higher
+- **Git**: For cloning with submodules
+- **C++20 Compiler**: See platform-specific requirements below
+- **Rust** (optional): For certain optimizations (can be disabled with `-DMOMO_ENABLE_RUST_CODE=Off`)
+
+### Platform-Specific Requirements
+
+<Tabs>
+  <Tab title="Windows">
+    - Visual Studio 2022 (or newer) with C++ development tools
+    - Windows SDK
+    - Administrator privileges (for registry dump)
+  </Tab>
+  
+  <Tab title="Linux">
+    - GCC 11+ or Clang 15+
+    - Standard build tools (`build-essential` on Ubuntu/Debian)
+    - No special privileges required
+  </Tab>
+  
+  <Tab title="macOS">
+    - Xcode Command Line Tools
+    - macOS 11.0 or higher
+    - For Apple Silicon: native arm64 support
+  </Tab>
+</Tabs>
+
+## Building on Windows
+
+### Using Visual Studio 2022
+
+<Steps>
+  <Step title="Clone the Repository">
+    ```bash
+    git clone --recurse-submodules https://github.com/momo5502/sogen.git
+    cd sogen
+    ```
+  </Step>
+  
+  <Step title="Open x64 Development Command Prompt">
+    Start Menu → Visual Studio 2022 → x64 Native Tools Command Prompt for VS 2022
+  </Step>
+  
+  <Step title="Generate Visual Studio Solution">
+    ```bash
+    cmake --preset=vs2022
+    ```
+    
+    This creates the solution at `build/vs2022/emulator.sln`
+  </Step>
+  
+  <Step title="Build the Project">
+    Choose one method:
+    
+    <CodeGroup>
+    
+    ```bash Command Line (Release)
+    cmake --build --preset=release
+    ```
+    
+    ```bash Command Line (Debug)
+    cmake --build --preset=debug
+    ```
+    
+    ```text Visual Studio IDE
+    1. Open build/vs2022/emulator.sln
+    2. Select Release or Debug configuration
+    3. Build → Build Solution (F7)
+    ```
+    
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Create Registry Dump">
+    Run as administrator:
+    
+    ```bash
+    src\tools\grab-registry.bat
+    ```
+    
+    Then move the registry folder to artifacts:
+    
+    ```bash
+    move registry build\vs2022\artifacts\registry
+    ```
+  </Step>
+</Steps>
+
+### Using MinGW on Windows
+
+While you can build with MinGW, it's recommended to cross-compile from Linux:
+
+```bash
+# On Linux
+cmake --preset=release -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/toolchain/mingw-w64.cmake
+cmake --build --preset=release
+```
+
+## Building on Linux
+
+### Ubuntu/Debian
+
+<Steps>
+  <Step title="Install Dependencies">
+    ```bash
+    sudo apt update
+    sudo apt install -y build-essential cmake git
+    ```
+  </Step>
+  
+  <Step title="Clone the Repository">
+    ```bash
+    git clone --recurse-submodules https://github.com/momo5502/sogen.git
+    cd sogen
+    ```
+  </Step>
+  
+  <Step title="Build with GCC">
+    ```bash
+    cmake --preset=release
+    cmake --build --preset=release
+    ```
+    
+    Artifacts will be in `build/release/artifacts/`
+  </Step>
+</Steps>
+
+### Using Clang (Alternative)
+
+<Steps>
+  <Step title="Install Clang">
+    ```bash
+    # Install LLVM 21 (or your preferred version)
+    wget https://apt.llvm.org/llvm.sh
+    chmod +x llvm.sh
+    sudo ./llvm.sh 21
+    sudo apt install -y clang-21 lld-21
+    ```
+  </Step>
+  
+  <Step title="Set Clang as Default">
+    ```bash
+    sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-21 100
+    sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-21 100
+    sudo update-alternatives --set cc /usr/bin/clang-21
+    sudo update-alternatives --set c++ /usr/bin/clang++-21
+    ```
+  </Step>
+  
+  <Step title="Build">
+    ```bash
+    cmake --preset=release
+    cmake --build --preset=release
+    ```
+  </Step>
+</Steps>
+
+### Arch Linux
+
+```bash
+sudo pacman -S base-devel cmake git
+git clone --recurse-submodules https://github.com/momo5502/sogen.git
+cd sogen
+cmake --preset=release
+cmake --build --preset=release
+```
+
+### Fedora/RHEL
+
+```bash
+sudo dnf groupinstall "Development Tools"
+sudo dnf install cmake git
+git clone --recurse-submodules https://github.com/momo5502/sogen.git
+cd sogen
+cmake --preset=release
+cmake --build --preset=release
+```
+
+## Building on macOS
+
+### Apple Silicon (arm64)
+
+<Steps>
+  <Step title="Install Xcode Command Line Tools">
+    ```bash
+    xcode-select --install
+    ```
+  </Step>
+  
+  <Step title="Install CMake">
+    ```bash
+    # Using Homebrew
+    brew install cmake
+    
+    # Or download from https://cmake.org/download/
+    ```
+  </Step>
+  
+  <Step title="Clone and Build">
+    ```bash
+    git clone --recurse-submodules https://github.com/momo5502/sogen.git
+    cd sogen
+    cmake --preset=release
+    cmake --build --preset=release
+    ```
+  </Step>
+</Steps>
+
+### Intel Mac (x86_64)
+
+Same as Apple Silicon:
+
+```bash
+git clone --recurse-submodules https://github.com/momo5502/sogen.git
+cd sogen
+cmake --preset=release
+cmake --build --preset=release
+```
+
+## Advanced Build Options
+
+Sogen provides several CMake options to customize your build:
+
+### CMake Build Options
+
+```bash
+# Enable AVX2 support (default: ON)
+cmake --preset=release -DMOMO_ENABLE_AVX2=ON
+
+# Enable sanitizers for debugging (default: OFF)
+cmake --preset=release -DMOMO_ENABLE_SANITIZER=ON
+
+# Enable clang-tidy checks (default: OFF)
+cmake --preset=release -DMOMO_ENABLE_CLANG_TIDY=ON
+
+# Disable Rust code (default: ON)
+cmake --preset=release -DMOMO_ENABLE_RUST_CODE=OFF
+
+# Build only libraries, not tools (useful for embedding)
+cmake --preset=release -DSOGEN_BUILD_TOOLS=OFF
+
+# Build as static libraries
+cmake --preset=release -DSOGEN_BUILD_STATIC=ON
+
+# Set reflection level (0-3, default: 0)
+cmake --preset=release -DMOMO_REFLECTION_LEVEL=1
+```
+
+### Example: Optimized Build
+
+```bash
+cmake --preset=release \
+  -DMOMO_ENABLE_AVX2=ON \
+  -DMOMO_ENABLE_RUST_CODE=ON \
+  -DCMAKE_BUILD_TYPE=Release
+
+cmake --build --preset=release -j $(nproc)
+```
+
+### Example: Debug Build with Sanitizers
+
+```bash
+cmake --preset=debug \
+  -DMOMO_ENABLE_SANITIZER=ON \
+  -DCMAKE_BUILD_TYPE=Debug
+
+cmake --build --preset=debug
+```
+
+## Mobile and Embedded Platforms
+
+### iOS (arm64)
+
+<Steps>
+  <Step title="Install Rust Target">
+    ```bash
+    rustup target add aarch64-apple-ios
+    ```
+  </Step>
+  
+  <Step title="Build for iOS">
+    ```bash
+    cmake --preset=release \
+      -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/toolchain/ios.cmake
+    
+    cmake --build --preset=release
+    ```
+  </Step>
+</Steps>
+
+### Android
+
+<Steps>
+  <Step title="Install Android NDK">
+    Download Android NDK r26d or newer from the [Android NDK downloads page](https://developer.android.com/ndk/downloads).
+  </Step>
+  
+  <Step title="Set Environment Variables">
+    ```bash
+    export ANDROID_NDK_ROOT=/path/to/ndk
+    export ANDROID_ABI=arm64-v8a  # or x86_64
+    ```
+  </Step>
+  
+  <Step title="Install Rust Target">
+    ```bash
+    # For arm64
+    rustup target add aarch64-linux-android
+    
+    # For x86_64
+    rustup target add x86_64-linux-android
+    ```
+  </Step>
+  
+  <Step title="Build">
+    ```bash
+    cmake --preset=release \
+      -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/toolchain/android-ndk.cmake
+    
+    cmake --build --preset=release
+    ```
+  </Step>
+</Steps>
+
+## WebAssembly
+
+### Emscripten (Web)
+
+<Steps>
+  <Step title="Install Emscripten">
+    ```bash
+    # Install emsdk
+    git clone https://github.com/emscripten-core/emsdk.git
+    cd emsdk
+    ./emsdk install latest
+    ./emsdk activate latest
+    source ./emsdk_env.sh
+    cd ..
+    ```
+  </Step>
+  
+  <Step title="Build for Web">
+    ```bash
+    cmake --preset=release \
+      -DMOMO_ENABLE_RUST_CODE=Off \
+      -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake
+    
+    cmake --build --preset=release
+    ```
+  </Step>
+</Steps>
+
+### Emscripten with Memory64
+
+For programs requiring more than 4GB of memory:
+
+```bash
+cmake --preset=release \
+  -DMOMO_ENABLE_RUST_CODE=Off \
+  -DMOMO_EMSCRIPTEN_MEMORY64=On \
+  -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake
+
+cmake --build --preset=release
+```
+
+<Warning>
+  Memory64 support is experimental and may not work in all browsers.
+</Warning>
+
+### Emscripten for Node.js
+
+```bash
+cmake --preset=release \
+  -DMOMO_EMSCRIPTEN_SUPPORT_NODEJS=On \
+  -DMOMO_ENABLE_RUST_CODE=Off \
+  -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake
+
+cmake --build --preset=release
+```
+
+## Creating an Emulation Root
+
+For proper emulation, Sogen needs a Windows system root with DLLs and registry.
+
+### On Windows
+
+<Steps>
+  <Step title="Run Creation Script">
+    ```bash
+    src\tools\create-root.bat
+    ```
+    
+    This creates a `root` folder with the Windows system directory structure.
+  </Step>
+  
+  <Step title="Dump Registry (as Administrator)">
+    ```bash
+    src\tools\grab-registry.bat
+    ```
+  </Step>
+  
+  <Step title="Move Files">
+    ```bash
+    move registry root\registry
+    move root build\vs2022\artifacts\root
+    ```
+  </Step>
+</Steps>
+
+### Using Pre-built Emulation Root
+
+You can also download a pre-built emulation root from the CI artifacts:
+
+1. Go to [GitHub Actions](https://github.com/momo5502/sogen/actions)
+2. Find a successful build
+3. Download the "Windows 2022 Emulation Root" or "Windows 2025 Emulation Root" artifact
+4. Extract to `build/release/artifacts/root`
+
+## Running Tests
+
+Verify your build works correctly:
+
+<CodeGroup>
+
+```bash Windows
+cd build\vs2022\artifacts
+analyzer.exe test-sample.exe
+```
+
+```bash Linux/macOS
+cd build/release/artifacts
+./analyzer test-sample.exe
+```
+
+</CodeGroup>
+
+For full test suite:
+
+```bash
+cd build/release
+ctest --verbose
+```
+
+### Test Environment Variables
+
+```bash
+# Use Icicle emulator instead of Unicorn
+export EMULATOR_ICICLE=true
+
+# Enable verbose test output
+export EMULATOR_VERBOSE=true
+
+# Specify custom emulation root
+export EMULATOR_ROOT=/path/to/root
+
+# Specify test sample
+export ANALYSIS_SAMPLE=/path/to/test-sample.exe
+```
+
+## Troubleshooting
+
+### Submodule Issues
+
+If you forgot `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
+```
+
+### CMake Version Too Old
+
+```bash
+# Ubuntu/Debian: Install from Kitware repository
+wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | gpg --dearmor - | sudo tee /etc/apt/trusted.gpg.d/kitware.gpg
+sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main'
+sudo apt update
+sudo apt install cmake
+
+# Or build from source
+wget https://github.com/Kitware/CMake/releases/download/v3.28.0/cmake-3.28.0.tar.gz
+tar -xzf cmake-3.28.0.tar.gz
+cd cmake-3.28.0
+./bootstrap && make -j$(nproc) && sudo make install
+```
+
+### Rust Not Found
+
+Install Rust:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
+Or disable Rust support:
+
+```bash
+cmake --preset=release -DMOMO_ENABLE_RUST_CODE=OFF
+```
+
+### Build Failures on macOS
+
+Ensure you're not generating universal binaries:
+
+```bash
+export ARCHFLAGS="nope"
+cmake --preset=release
+cmake --build --preset=release
+```
+
+### Out of Memory During Build
+
+Reduce parallel jobs:
+
+```bash
+# Instead of -j (all cores)
+cmake --build --preset=release -j2
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Learn how to use Sogen and run your first emulated program
+  </Card>
+  
+  <Card
+    title="Configuration"
+    icon="sliders"
+  >
+    Explore advanced configuration options and command-line flags
+  </Card>
+</CardGroup>

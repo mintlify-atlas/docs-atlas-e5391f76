@@ -1,0 +1,463 @@
+---
+title: 'process_context'
+description: 'Core process state and resource management for Windows emulation'
+---
+
+The `process_context` class maintains the complete state of an emulated Windows process, including threads, handles, memory structures, and Windows-specific objects.
+
+## Overview
+
+This class serves as the central hub for process-level resources in the Windows emulator. It manages:
+
+- Process Environment Block (PEB) and process parameters
+- Thread lifecycle and synchronization
+- Handle tables for kernel objects (files, events, sections, etc.)
+- User-mode objects (windows, desktops)
+- Atoms and window classes
+- WOW64 support for 32-bit applications
+
+## Constructor
+
+```cpp
+process_context(
+    x86_64_emulator& emu,
+    memory_manager& memory,
+    utils::clock& clock,
+    callbacks& cb
+)
+```
+
+<ParamField path="emu" type="x86_64_emulator&">
+  Reference to the CPU emulator instance
+</ParamField>
+
+<ParamField path="memory" type="memory_manager&">
+  Reference to the memory manager for allocations
+</ParamField>
+
+<ParamField path="clock" type="utils::clock&">
+  System clock for time-related operations
+</ParamField>
+
+<ParamField path="cb" type="callbacks&">
+  Callback functions for thread lifecycle events
+</ParamField>
+
+## Methods
+
+### setup
+
+Initializes the process context with all necessary Windows structures.
+
+```cpp
+void setup(
+    x86_64_emulator& emu,
+    memory_manager& memory,
+    registry_manager& registry,
+    file_system& file_system,
+    windows_version_manager& version,
+    const application_settings& app_settings,
+    const mapped_module& executable,
+    const mapped_module& ntdll,
+    const apiset::container& apiset_container,
+    const mapped_module* ntdll32 = nullptr
+)
+```
+
+<ParamField path="emu" type="x86_64_emulator&">
+  CPU emulator instance
+</ParamField>
+
+<ParamField path="memory" type="memory_manager&">
+  Memory manager for virtual address space
+</ParamField>
+
+<ParamField path="registry" type="registry_manager&">
+  Windows registry emulation
+</ParamField>
+
+<ParamField path="file_system" type="file_system&">
+  Virtual file system for path translation
+</ParamField>
+
+<ParamField path="version" type="windows_version_manager&">
+  Windows version information provider
+</ParamField>
+
+<ParamField path="app_settings" type="const application_settings&">
+  Application-specific configuration
+</ParamField>
+
+<ParamField path="executable" type="const mapped_module&">
+  The main executable module
+</ParamField>
+
+<ParamField path="ntdll" type="const mapped_module&">
+  The ntdll.dll module
+</ParamField>
+
+<ParamField path="apiset_container" type="const apiset::container&">
+  API set schema container for module redirection
+</ParamField>
+
+<ParamField path="ntdll32" type="const mapped_module*" default="nullptr">
+  Optional 32-bit ntdll for WOW64 processes
+</ParamField>
+
+### create_thread
+
+Creates a new emulated thread in the process.
+
+```cpp
+handle create_thread(
+    memory_manager& memory,
+    uint64_t start_address,
+    uint64_t argument,
+    uint64_t stack_size,
+    uint32_t create_flags,
+    bool initial_thread = false
+)
+```
+
+<ParamField path="memory" type="memory_manager&">
+  Memory manager for thread stack allocation
+</ParamField>
+
+<ParamField path="start_address" type="uint64_t">
+  Entry point address for the thread
+</ParamField>
+
+<ParamField path="argument" type="uint64_t">
+  Parameter passed to the thread function
+</ParamField>
+
+<ParamField path="stack_size" type="uint64_t">
+  Size of the thread stack in bytes
+</ParamField>
+
+<ParamField path="create_flags" type="uint32_t">
+  Thread creation flags (e.g., CREATE_SUSPENDED)
+</ParamField>
+
+<ParamField path="initial_thread" type="bool" default="false">
+  Whether this is the process's initial thread
+</ParamField>
+
+**Returns:** A handle to the newly created thread.
+
+### Atom Management
+
+Atoms are globally unique string identifiers used by Windows for window classes and other purposes.
+
+#### find_atom
+
+```cpp
+std::optional<uint16_t> find_atom(std::u16string_view name)
+```
+
+Searches for an existing atom by name.
+
+<ParamField path="name" type="std::u16string_view">
+  The atom name to search for
+</ParamField>
+
+**Returns:** The atom ID if found, or `std::nullopt` otherwise.
+
+#### add_or_find_atom
+
+```cpp
+uint16_t add_or_find_atom(std::u16string name)
+```
+
+Adds a new atom or returns existing one, incrementing reference count.
+
+<ParamField path="name" type="std::u16string">
+  The atom name to add or find
+</ParamField>
+
+**Returns:** The atom ID (new or existing).
+
+#### delete_atom
+
+```cpp
+bool delete_atom(const std::u16string& name)
+bool delete_atom(uint16_t atom_id)
+```
+
+Decrements the reference count and removes the atom if it reaches zero.
+
+<ParamField path="name" type="const std::u16string&">
+  The atom name to delete (first overload)
+</ParamField>
+
+<ParamField path="atom_id" type="uint16_t">
+  The atom ID to delete (second overload)
+</ParamField>
+
+**Returns:** `true` if the atom was deleted, `false` otherwise.
+
+#### get_atom_name
+
+```cpp
+const std::u16string* get_atom_name(uint16_t atom_id) const
+```
+
+Retrieves the name associated with an atom ID.
+
+<ParamField path="atom_id" type="uint16_t">
+  The atom ID to look up
+</ParamField>
+
+**Returns:** Pointer to the atom name, or `nullptr` if not found.
+
+### KnownDLLs Management
+
+KnownDLLs are preloaded system DLLs cached as section objects.
+
+#### build_knowndlls_section_table
+
+```cpp
+template <typename T>
+void build_knowndlls_section_table(
+    registry_manager& registry,
+    const file_system& file_system,
+    const apiset_map& apiset,
+    const windows_path& system_root,
+    bool is_32bit
+)
+```
+
+Builds the KnownDLLs section table from registry configuration.
+
+<ParamField path="registry" type="registry_manager&">
+  Registry manager to read KnownDLLs list
+</ParamField>
+
+<ParamField path="file_system" type="const file_system&">
+  File system for resolving DLL paths
+</ParamField>
+
+<ParamField path="apiset" type="const apiset_map&">
+  API set schema for module redirection
+</ParamField>
+
+<ParamField path="system_root" type="const windows_path&">
+  Windows system directory path
+</ParamField>
+
+<ParamField path="is_32bit" type="bool">
+  Whether to build 32-bit or 64-bit KnownDLLs table
+</ParamField>
+
+#### get_knowndll_section_by_name
+
+```cpp
+std::optional<section> get_knowndll_section_by_name(
+    const std::u16string& name,
+    bool is_32bit
+) const
+```
+
+Retrieves a KnownDLL section object by name.
+
+<ParamField path="name" type="const std::u16string&">
+  DLL name (e.g., "kernel32.dll")
+</ParamField>
+
+<ParamField path="is_32bit" type="bool">
+  Whether to search in 32-bit or 64-bit table
+</ParamField>
+
+**Returns:** The section object if found.
+
+#### add_knowndll_section
+
+```cpp
+void add_knowndll_section(
+    const std::u16string& name,
+    const section& section,
+    bool is_32bit
+)
+```
+
+Adds a section to the KnownDLLs cache.
+
+#### has_knowndll_section
+
+```cpp
+bool has_knowndll_section(
+    const std::u16string& name,
+    bool is_32bit
+) const
+```
+
+Checks if a KnownDLL section exists.
+
+### get_handle_store
+
+```cpp
+generic_handle_store* get_handle_store(handle handle)
+```
+
+Retrieves the appropriate handle store for a given handle.
+
+<ParamField path="handle" type="handle">
+  The handle to look up
+</ParamField>
+
+**Returns:** Pointer to the handle store, or `nullptr` if not found.
+
+### get_live_thread_count
+
+```cpp
+size_t get_live_thread_count() const
+```
+
+**Returns:** The number of currently active threads.
+
+### Serialization
+
+```cpp
+void serialize(utils::buffer_serializer& buffer) const
+void deserialize(utils::buffer_deserializer& buffer)
+```
+
+Serialization support for saving/loading process state.
+
+## Public Members
+
+### WOW64 Support
+
+<ParamField path="is_wow64_process" type="bool">
+  Flag indicating if this is a 32-bit process running under WOW64
+</ParamField>
+
+### Process State
+
+<ParamField path="exit_status" type="std::optional<NTSTATUS>">
+  Process exit status code (set when process terminates)
+</ParamField>
+
+### Memory Structures
+
+<ParamField path="peb64" type="emulator_object<PEB64>">
+  64-bit Process Environment Block
+</ParamField>
+
+<ParamField path="process_params64" type="emulator_object<RTL_USER_PROCESS_PARAMETERS64>">
+  64-bit process parameters (command line, environment, etc.)
+</ParamField>
+
+<ParamField path="peb32" type="std::optional<emulator_object<PEB32>>">
+  32-bit PEB for WOW64 processes
+</ParamField>
+
+<ParamField path="process_params32" type="std::optional<emulator_object<RTL_USER_PROCESS_PARAMETERS32>>">
+  32-bit process parameters for WOW64
+</ParamField>
+
+### Critical Addresses
+
+<ParamField path="ntdll_image_base" type="uint64_t">
+  Base address of ntdll.dll
+</ParamField>
+
+<ParamField path="ldr_initialize_thunk" type="uint64_t">
+  Address of LdrInitializeThunk (thread entry point)
+</ParamField>
+
+<ParamField path="rtl_user_thread_start" type="uint64_t">
+  Address of RtlUserThreadStart
+</ParamField>
+
+<ParamField path="ki_user_apc_dispatcher" type="uint64_t">
+  Address of KiUserApcDispatcher
+</ParamField>
+
+<ParamField path="ki_user_exception_dispatcher" type="uint64_t">
+  Address of KiUserExceptionDispatcher
+</ParamField>
+
+### Handle Stores
+
+<ParamField path="events" type="handle_store<handle_types::event, event>">
+  Event object handle store
+</ParamField>
+
+<ParamField path="files" type="handle_store<handle_types::file, file>">
+  File handle store
+</ParamField>
+
+<ParamField path="sections" type="handle_store<handle_types::section, section>">
+  Section object handle store
+</ParamField>
+
+<ParamField path="devices" type="handle_store<handle_types::device, io_device_container>">
+  Device handle store
+</ParamField>
+
+<ParamField path="semaphores" type="handle_store<handle_types::semaphore, semaphore>">
+  Semaphore handle store
+</ParamField>
+
+<ParamField path="threads" type="handle_store<handle_types::thread, emulator_thread>">
+  Thread handle store
+</ParamField>
+
+<ParamField path="windows" type="user_handle_store<handle_types::window, window>">
+  Window handle store (user-mode handles)
+</ParamField>
+
+<ParamField path="desktops" type="handle_store<handle_types::desktop, desktop>">
+  Desktop handle store
+</ParamField>
+
+### Thread Management
+
+<ParamField path="active_thread" type="emulator_thread*">
+  Pointer to the currently executing thread
+</ParamField>
+
+<ParamField path="spawned_thread_count" type="uint32_t">
+  Total number of threads created
+</ParamField>
+
+## Usage Example
+
+```cpp
+// Create process context
+process_context::callbacks callbacks;
+callbacks.on_thread_create = [](handle h, emulator_thread& thr) {
+    printf("Thread created: %p\n", h.value);
+};
+
+process_context context(emu, memory, clock, callbacks);
+
+// Setup the process
+context.setup(emu, memory, registry, fs, version, settings,
+              executable_module, ntdll_module, apiset);
+
+// Create a thread
+auto thread_handle = context.create_thread(
+    memory,
+    0x140001000,  // entry point
+    0,            // argument
+    0x40000,      // 256KB stack
+    0,            // no special flags
+    true          // initial thread
+);
+
+// Add an atom
+auto atom_id = context.add_or_find_atom(u"MyWindowClass");
+
+// Look up a handle store
+if (auto* store = context.get_handle_store(some_handle)) {
+    // Work with the handle store
+}
+```
+
+## See Also
+
+- [module_manager](/api/module-manager) - Module and DLL management
+- [syscall_dispatcher](/api/syscall-dispatcher) - System call handling
+- [file_system](/api/file-system) - Virtual file system

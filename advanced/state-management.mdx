@@ -1,0 +1,547 @@
+---
+title: State Management
+description: Save, load, and restore complete emulator state with Sogen's serialization and snapshot system
+---
+
+# State Management
+
+Sogen provides comprehensive state management capabilities, allowing you to save complete emulator state to disk and restore it later, or create fast in-memory snapshots for rapid state restoration.
+
+## Overview
+
+Sogen supports two types of state management:
+
+1. **Full Serialization**: Complete emulator state saved to disk in a compressed format
+2. **In-Memory Snapshots**: Fast snapshots for rapid state restoration (used by the fuzzer)
+
+Both approaches capture the entire state of the Windows emulator including:
+- CPU registers and flags
+- Memory contents (all committed regions)
+- Loaded modules and their state
+- Thread contexts
+- File handles and I/O state
+- Registry state
+
+## Snapshot Files
+
+### Creating Snapshots
+
+Create a snapshot of the current emulator state:
+
+```cpp
+#include <snapshot.hpp>
+
+windows_emulator win_emu{/* ... */};
+
+// Run to desired state
+win_emu.start();
+
+// Create and save snapshot
+auto snapshot_path = snapshot::write_emulator_snapshot(win_emu);
+printf("Snapshot saved to: %s\n", snapshot_path.string().c_str());
+```
+
+### Snapshot File Format
+
+Snapshots use a custom binary format with compression:
+
+```cpp
+// From src/analyzer/snapshot.cpp:10-17
+struct snapshot_header
+{
+    char magic[4] = {'S', 'N', 'A', 'P'};  // File signature
+    uint32_t version{1};                    // Format version
+};
+
+static_assert(sizeof(snapshot_header) == 8);
+```
+
+The file structure:
+1. 8-byte header (magic + version)
+2. ZSTD-compressed emulator state
+
+### Creating Snapshots
+
+The `create_emulator_snapshot()` function serializes and compresses state:
+
+```cpp
+// From src/analyzer/snapshot.cpp:71-84
+std::vector<std::byte> create_emulator_snapshot(const windows_emulator& win_emu)
+{
+    const auto state = get_compressed_emulator_state(win_emu);
+    
+    snapshot_header header{};
+    std::span header_span(reinterpret_cast<const std::byte*>(&header), sizeof(header));
+    
+    std::vector<std::byte> snapshot{};
+    snapshot.reserve(header_span.size() + state.size());
+    snapshot.assign(header_span.begin(), header_span.end());
+    snapshot.insert(snapshot.end(), state.begin(), state.end());
+    
+    return snapshot;
+}
+```
+
+### Writing to Disk
+
+Snapshots are automatically named with timestamp:
+
+```cpp
+// From src/analyzer/snapshot.cpp:86-102
+std::filesystem::path write_emulator_snapshot(const windows_emulator& win_emu, const bool log)
+{
+    // Format: <executable>-<timestamp>.snap
+    std::filesystem::path snapshot_file = 
+        get_main_executable_name(win_emu) + "-" + 
+        std::to_string(time(nullptr)) + ".snap";
+    
+    if (log) {
+        win_emu.log.log("Writing snapshot to %s...\n", snapshot_file.string().c_str());
+    }
+    
+    const auto snapshot = create_emulator_snapshot(win_emu);
+    if (!utils::io::write_file(snapshot_file, snapshot)) {
+        throw std::runtime_error("Failed to write snapshot!");
+    }
+    
+    return snapshot_file;
+}
+```
+
+Example filenames:
+- `notepad-1701234567.snap`
+- `malware-1701234890.snap`
+
+## Loading Snapshots
+
+### From File
+
+Load a snapshot from disk:
+
+```cpp
+#include <snapshot.hpp>
+
+windows_emulator win_emu{create_x86_64_emulator()};
+
+// Load snapshot
+snapshot::load_emulator_snapshot(win_emu, "notepad-1701234567.snap");
+
+// Continue execution from saved state
+win_emu.start();
+```
+
+### From Memory
+
+Load from a buffer:
+
+```cpp
+std::vector<std::byte> snapshot_data = /* ... */;
+snapshot::load_emulator_snapshot(win_emu, snapshot_data);
+```
+
+### Implementation
+
+```cpp
+// From src/analyzer/snapshot.cpp:104-121
+void load_emulator_snapshot(windows_emulator& win_emu, 
+                           const std::span<const std::byte> snapshot)
+{
+    const auto data = get_decompressed_emulator_state(snapshot);
+    
+    utils::buffer_deserializer deserializer{data};
+    win_emu.deserialize(deserializer);
+}
+
+void load_emulator_snapshot(windows_emulator& win_emu, 
+                           const std::filesystem::path& snapshot_file)
+{
+    std::vector<std::byte> data{};
+    if (!utils::io::read_file(snapshot_file, &data)) {
+        throw std::runtime_error("Failed to read snapshot file: " + snapshot_file.string());
+    }
+    
+    load_emulator_snapshot(win_emu, data);
+}
+```
+
+## Compression
+
+### ZSTD Compression
+
+Snapshots use ZSTD compression for optimal size/speed ratio:
+
+```cpp
+// From src/analyzer/snapshot.cpp:45-51
+std::vector<std::byte> get_compressed_emulator_state(const windows_emulator& win_emu)
+{
+    utils::buffer_serializer serializer{};
+    win_emu.serialize(serializer);
+    
+    return utils::compression::zstd::compress(serializer.get_buffer());
+}
+```
+
+Decompression:
+
+```cpp
+// From src/analyzer/snapshot.cpp:53-57
+std::vector<std::byte> get_decompressed_emulator_state(const std::span<const std::byte> snapshot)
+{
+    const auto data = validate_header(snapshot);
+    return utils::compression::zstd::decompress(data);
+}
+```
+
+ZSTD provides:
+- Fast compression/decompression
+- High compression ratio (typically 70-90% size reduction)
+- Deterministic output
+
+## Validation
+
+### Header Validation
+
+Snapshots are validated before loading:
+
+```cpp
+// From src/analyzer/snapshot.cpp:19-43
+std::span<const std::byte> validate_header(const std::span<const std::byte> snapshot)
+{
+    snapshot_header header{};
+    constexpr snapshot_header default_header{};
+    
+    if (snapshot.size() < sizeof(header)) {
+        throw std::runtime_error("Snapshot is too small");
+    }
+    
+    memcpy(&header, snapshot.data(), sizeof(header));
+    
+    if (memcmp(default_header.magic, header.magic, sizeof(header.magic)) != 0) {
+        throw std::runtime_error("Invalid snapshot");
+    }
+    
+    if (default_header.version != header.version) {
+        throw std::runtime_error(
+            "Unsupported snapshot version: " + std::to_string(header.version) +
+            "(needed: " + std::to_string(default_header.version) + ")");
+    }
+    
+    return snapshot.subspan(sizeof(header));
+}
+```
+
+This prevents:
+- Loading corrupt files
+- Loading incompatible snapshot versions
+- Loading non-snapshot files
+
+## Serialization Interface
+
+### Emulator Serialization
+
+The `windows_emulator` class implements serialization:
+
+```cpp
+// From src/windows-emulator/windows_emulator.hpp:166-167
+void serialize(utils::buffer_serializer& buffer) const;
+void deserialize(utils::buffer_deserializer& buffer);
+```
+
+These methods save/restore:
+- All CPU state (registers, flags)
+- Memory manager state
+- Module manager (loaded DLLs, exports, imports)
+- Process context (threads, handles)
+- File system state
+- Registry modifications
+- Network socket state
+
+### Application Settings
+
+Application configuration is also serialized:
+
+```cpp
+// From src/windows-emulator/windows_emulator.hpp:49-61
+struct application_settings
+{
+    windows_path application{};
+    windows_path working_directory{};
+    std::vector<std::u16string> arguments{};
+    
+    void serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write(this->application);
+        buffer.write(this->working_directory);
+        buffer.write_vector(this->arguments);
+    }
+    
+    void deserialize(utils::buffer_deserializer& buffer)
+    {
+        buffer.read(this->application);
+        buffer.read(this->working_directory);
+        buffer.read_vector(this->arguments);
+    }
+};
+```
+
+## In-Memory Snapshots
+
+### Fast Snapshot API
+
+For performance-critical scenarios (like fuzzing), use in-memory snapshots:
+
+```cpp
+// From src/windows-emulator/windows_emulator.hpp:169-170
+void save_snapshot();
+void restore_snapshot();
+```
+
+These provide:
+- Extremely fast save/restore (microseconds vs milliseconds)
+- No disk I/O
+- Perfect for repeated state restoration
+
+### Fuzzing Use Case
+
+The fuzzer uses in-memory snapshots for performance:
+
+```cpp
+// From src/fuzzer/main.cpp:88-103
+fuzzer_executer(const std::span<const std::byte> data)
+    : emulator_data(data)
+{
+    // Initial setup
+    utils::buffer_deserializer deserializer{emulator_data};
+    emu.deserialize(deserializer);
+    
+    // Create fast snapshot
+    emu.save_snapshot();
+    
+    // Setup return hook
+    const auto return_address = emu.emu().read_stack(0);
+    emu.emu().hook_memory_execution(return_address, [&](const uint64_t) {
+        emu.emu().stop();
+    });
+}
+
+void restore_emulator()
+{
+    emu.restore_snapshot();  // Fast restore
+}
+```
+
+For each fuzzing iteration:
+1. Restore snapshot (microseconds)
+2. Inject new input
+3. Run emulation
+4. Repeat
+
+This is much faster than full deserialization for each iteration.
+
+## Use Cases
+
+### 1. Malware Analysis
+
+Save state before detonating malware:
+
+```cpp
+windows_emulator win_emu{create_x86_64_emulator()};
+
+// Setup clean environment
+load_application(win_emu, "malware.exe");
+
+// Save clean state
+auto clean_state = snapshot::write_emulator_snapshot(win_emu);
+
+// Run malware
+win_emu.start();
+
+// Restore to clean state
+snapshot::load_emulator_snapshot(win_emu, clean_state);
+
+// Run again with different conditions
+win_emu.start();
+```
+
+### 2. Debugging
+
+Save state at interesting points:
+
+```cpp
+win_emu.callbacks.on_syscall = [&](uint32_t syscall_id, std::string_view name) {
+    if (name == "NtCreateFile") {
+        // Save state before file creation
+        snapshot::write_emulator_snapshot(win_emu);
+    }
+    return instruction_hook_continuation::run;
+};
+```
+
+### 3. Testing
+
+Test different code paths from same starting point:
+
+```cpp
+// Get to interesting function
+run_to_target_function(win_emu);
+
+// Save state
+auto base_state = snapshot::create_emulator_snapshot(win_emu);
+
+// Test path 1
+win_emu.emu().reg(x86_register::rax, 0);
+win_emu.start();
+check_results();
+
+// Restore and test path 2  
+snapshot::load_emulator_snapshot(win_emu, base_state);
+win_emu.emu().reg(x86_register::rax, 1);
+win_emu.start();
+check_results();
+```
+
+### 4. Fuzzing
+
+The fuzzer uses snapshots for performance:
+
+```cpp
+// Setup once
+windows_emulator base_emu{create_x86_64_emulator()};
+run_to_target(base_emu);
+
+utils::buffer_serializer serializer{};
+base_emu.serialize(serializer);
+auto snapshot = serializer.move_buffer();
+
+// For each fuzzer worker
+windows_emulator worker_emu{create_x86_64_emulator()};
+utils::buffer_deserializer deserializer{snapshot};
+worker_emu.deserialize(deserializer);
+worker_emu.save_snapshot();
+
+// For each iteration
+worker_emu.restore_snapshot();
+inject_fuzzed_input(worker_emu);
+worker_emu.start();
+```
+
+## Performance Considerations
+
+### Snapshot Size
+
+Snapshot size depends on:
+- Number of loaded modules
+- Amount of committed memory
+- Thread count
+- Open handles
+
+Typical sizes:
+- Simple executable: 1-5 MB compressed
+- Complex application: 10-50 MB compressed
+- Game/large app: 100+ MB compressed
+
+### Compression Ratio
+
+ZSTD typically achieves 70-90% compression:
+- 100 MB uncompressed → 10-30 MB compressed
+- Memory contains many zeros (uncommitted pages are excluded)
+- Code sections compress very well
+
+### Save/Restore Time
+
+Full serialization (disk):
+- Save: 10-100ms depending on size
+- Load: 10-100ms depending on size
+- Dominated by compression and I/O
+
+In-memory snapshots:
+- Save: &lt;1ms (memory copy)
+- Restore: &lt;1ms (memory copy)
+- Perfect for tight loops
+
+## Best Practices
+
+### 1. Snapshot Naming
+
+Use descriptive names:
+
+```cpp
+std::filesystem::path snapshot_file = 
+    "malware-before-decryption-" + std::to_string(time(nullptr)) + ".snap";
+```
+
+### 2. Verify Snapshots
+
+Check that snapshots load correctly:
+
+```cpp
+try {
+    snapshot::load_emulator_snapshot(win_emu, snapshot_file);
+} catch (const std::exception& e) {
+    printf("Failed to load snapshot: %s\n", e.what());
+}
+```
+
+### 3. Clean Up Old Snapshots
+
+Snapshots can consume significant disk space:
+
+```bash
+# Delete snapshots older than 7 days
+find . -name "*.snap" -mtime +7 -delete
+```
+
+### 4. Use In-Memory for Hot Paths
+
+If repeatedly restoring state:
+
+```cpp
+// Save once
+win_emu.save_snapshot();
+
+// Restore many times (fast)
+for (int i = 0; i < 1000000; i++) {
+    win_emu.restore_snapshot();
+    // ... test something ...
+}
+```
+
+## Troubleshooting
+
+### "Snapshot is too small"
+
+File is corrupt or truncated. Ensure:
+- Full write completed before reading
+- File wasn't modified externally
+
+### "Invalid snapshot"
+
+File doesn't have the correct magic bytes. Ensure:
+- File is actually a Sogen snapshot
+- File wasn't corrupted
+
+### "Unsupported snapshot version"
+
+Snapshot was created with a different version of Sogen. Snapshots are not backward/forward compatible across versions.
+
+Solution: Recreate snapshot with current Sogen version.
+
+### Large Snapshot Files
+
+If snapshots are unexpectedly large:
+- Application may have allocated significant memory
+- Check for memory leaks in target application
+- Consider snapshotting earlier in execution
+
+## Source Code Reference
+
+Key files:
+- `src/analyzer/snapshot.hpp` - Public snapshot API
+- `src/analyzer/snapshot.cpp` - Snapshot implementation
+- `src/windows-emulator/windows_emulator.hpp` - Serialization interface (lines 166-170)
+
+## Next Steps
+
+- Use snapshots with [GDB Integration](/advanced/gdb-integration) for debugging
+- Learn how [Fuzzing](/advanced/fuzzing) leverages snapshots for performance
+- Explore [Custom Backends](/advanced/custom-backends) for backend-specific considerations

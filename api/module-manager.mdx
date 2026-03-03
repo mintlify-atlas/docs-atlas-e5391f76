@@ -1,0 +1,462 @@
+---
+title: 'module_manager'
+description: 'Module and DLL loading for Windows PE executables'
+---
+
+The `module_manager` class handles loading, mapping, and managing PE (Portable Executable) modules in the emulated process. It supports both 32-bit and 64-bit modules and handles WOW64 processes.
+
+## Overview
+
+This class provides:
+
+- PE file parsing and memory mapping
+- Module lifetime management
+- Support for both native 64-bit and WOW64 (32-bit on 64-bit) execution
+- Module lookup by address or name
+- KnownDLLs optimization
+- Module load counting and duplicate handling
+
+## Enums
+
+### execution_mode
+
+Defines the execution mode for the emulated process.
+
+```cpp
+enum class execution_mode
+{
+    native_64bit,  // Native 64-bit execution
+    wow64_32bit,   // WOW64 mode for 32-bit applications
+    unknown        // Detection failed or unsupported
+};
+```
+
+## Structures
+
+### pe_detection_result
+
+Result of PE architecture detection.
+
+```cpp
+struct pe_detection_result
+{
+    winpe::pe_arch architecture;
+    execution_mode suggested_mode;
+    std::string error_message;
+
+    bool is_valid() const;
+};
+```
+
+<ParamField path="architecture" type="winpe::pe_arch">
+  Detected PE architecture (x86, x64, etc.)
+</ParamField>
+
+<ParamField path="suggested_mode" type="execution_mode">
+  Recommended execution mode based on architecture
+</ParamField>
+
+<ParamField path="error_message" type="std::string">
+  Error description if detection failed
+</ParamField>
+
+### callbacks
+
+Callback functions for module lifecycle events.
+
+```cpp
+struct callbacks
+{
+    utils::callback_list<void(mapped_module& mod)> on_module_load{};
+    utils::callback_list<void(mapped_module& mod)> on_module_unload{};
+};
+```
+
+### wow64_modules
+
+WOW64-specific module references.
+
+```cpp
+struct wow64_modules
+{
+    mapped_module* ntdll32 = nullptr;       // 32-bit ntdll.dll
+    mapped_module* wow64_dll = nullptr;     // wow64.dll
+    mapped_module* wow64win_dll = nullptr;  // wow64win.dll
+};
+```
+
+## Constructor
+
+```cpp
+module_manager(
+    memory_manager& memory,
+    file_system& file_sys,
+    callbacks& cb
+)
+```
+
+<ParamField path="memory" type="memory_manager&">
+  Memory manager for module allocations
+</ParamField>
+
+<ParamField path="file_sys" type="file_system&">
+  Virtual file system for resolving module paths
+</ParamField>
+
+<ParamField path="cb" type="callbacks&">
+  Callback functions for module events
+</ParamField>
+
+## Methods
+
+### map_main_modules
+
+Loads the main executable and core system modules.
+
+```cpp
+void map_main_modules(
+    const windows_path& executable_path,
+    windows_version_manager& version,
+    process_context& context,
+    const logger& logger
+)
+```
+
+<ParamField path="executable_path" type="const windows_path&">
+  Path to the main executable
+</ParamField>
+
+<ParamField path="version" type="windows_version_manager&">
+  Windows version manager
+</ParamField>
+
+<ParamField path="context" type="process_context&">
+  Process context to initialize
+</ParamField>
+
+<ParamField path="logger" type="const logger&">
+  Logger for diagnostic output
+</ParamField>
+
+This method:
+- Detects the executable architecture
+- Determines execution mode (native 64-bit or WOW64)
+- Loads ntdll.dll and other core modules
+- Sets up the WOW64 environment if needed
+
+### map_module
+
+Maps a module from the virtual file system.
+
+```cpp
+mapped_module* map_module(
+    windows_path file,
+    const logger& logger,
+    bool is_static = false,
+    bool allow_duplicate = false
+)
+```
+
+<ParamField path="file" type="windows_path">
+  Windows-style path to the module
+</ParamField>
+
+<ParamField path="logger" type="const logger&">
+  Logger instance
+</ParamField>
+
+<ParamField path="is_static" type="bool" default="false">
+  Whether this is a statically loaded module
+</ParamField>
+
+<ParamField path="allow_duplicate" type="bool" default="false">
+  Allow loading the same module multiple times
+</ParamField>
+
+**Returns:** Pointer to the mapped module, or `nullptr` on failure.
+
+### map_local_module
+
+Maps a module from the host file system.
+
+```cpp
+mapped_module* map_local_module(
+    const std::filesystem::path& file,
+    windows_path module_path,
+    const logger& logger,
+    bool is_static = false,
+    bool allow_duplicate = false
+)
+```
+
+<ParamField path="file" type="const std::filesystem::path&">
+  Host filesystem path to the PE file
+</ParamField>
+
+<ParamField path="module_path" type="windows_path">
+  Virtual Windows path for the module
+</ParamField>
+
+<ParamField path="logger" type="const logger&">
+  Logger instance
+</ParamField>
+
+<ParamField path="is_static" type="bool" default="false">
+  Static module flag
+</ParamField>
+
+<ParamField path="allow_duplicate" type="bool" default="false">
+  Allow duplicates flag
+</ParamField>
+
+**Returns:** Pointer to the mapped module, or `nullptr` on failure.
+
+### map_memory_module
+
+Maps a module that's already loaded in memory.
+
+```cpp
+mapped_module* map_memory_module(
+    uint64_t base_address,
+    uint64_t image_size,
+    windows_path module_path,
+    const logger& logger,
+    bool is_static = false,
+    bool allow_duplicate = false
+)
+```
+
+<ParamField path="base_address" type="uint64_t">
+  Base address of the module in memory
+</ParamField>
+
+<ParamField path="image_size" type="uint64_t">
+  Size of the module image
+</ParamField>
+
+<ParamField path="module_path" type="windows_path">
+  Virtual path for the module
+</ParamField>
+
+<ParamField path="logger" type="const logger&">
+  Logger instance
+</ParamField>
+
+<ParamField path="is_static" type="bool" default="false">
+  Static module flag
+</ParamField>
+
+<ParamField path="allow_duplicate" type="bool" default="false">
+  Allow duplicates flag
+</ParamField>
+
+**Returns:** Pointer to the mapped module, or `nullptr` on failure.
+
+### find_by_address
+
+Finds a module containing the specified address.
+
+```cpp
+mapped_module* find_by_address(const uint64_t address)
+```
+
+<ParamField path="address" type="uint64_t">
+  Address to search for
+</ParamField>
+
+**Returns:** Pointer to the module, or `nullptr` if not found.
+
+### find_by_name
+
+Finds a module by its name.
+
+```cpp
+mapped_module* find_by_name(const std::string_view name)
+```
+
+<ParamField path="name" type="std::string_view">
+  Module name to search for (e.g., "kernel32.dll")
+</ParamField>
+
+**Returns:** Pointer to the module, or `nullptr` if not found.
+
+### find_name
+
+Retrieves the name of the module at the given address.
+
+```cpp
+const char* find_name(const uint64_t address)
+```
+
+<ParamField path="address" type="uint64_t">
+  Address to look up
+</ParamField>
+
+**Returns:** Module name string, or "&lt;N/A&gt;" if not found.
+
+### unmap
+
+Unmaps a module from memory.
+
+```cpp
+bool unmap(uint64_t address)
+```
+
+<ParamField path="address" type="uint64_t">
+  Base address of the module to unmap
+</ParamField>
+
+**Returns:** `true` if unmapped successfully, `false` otherwise.
+
+### get_module_load_count_by_path
+
+```cpp
+std::optional<uint64_t> get_module_load_count_by_path(
+    const windows_path& path
+)
+```
+
+Retrieves the number of times a module has been loaded.
+
+<ParamField path="path" type="const windows_path&">
+  Module path
+</ParamField>
+
+**Returns:** Load count if the module has been loaded.
+
+### modules
+
+```cpp
+const module_map& modules() const
+```
+
+**Returns:** Map of all loaded modules (keyed by base address).
+
+### Execution Mode
+
+```cpp
+execution_mode get_execution_mode() const
+bool is_wow64_process() const
+```
+
+**Returns:** Current execution mode or WOW64 status.
+
+### Serialization
+
+```cpp
+void serialize(utils::buffer_serializer& buffer) const
+void deserialize(utils::buffer_deserializer& buffer)
+```
+
+Serialization support for saving/loading module state.
+
+## Public Members
+
+<ParamField path="executable" type="mapped_module*">
+  Pointer to the main executable module
+</ParamField>
+
+<ParamField path="ntdll" type="mapped_module*">
+  Pointer to ntdll.dll
+</ParamField>
+
+<ParamField path="win32u" type="mapped_module*">
+  Pointer to win32u.dll
+</ParamField>
+
+<ParamField path="wow64_modules_" type="wow64_modules">
+  WOW64-specific module pointers
+</ParamField>
+
+<ParamField path="modules_load_count" type="std::map<std::filesystem::path, uint64_t>">
+  Load count for each module path
+</ParamField>
+
+## Helper Classes
+
+### pe_architecture_detector
+
+Static methods for detecting PE architecture.
+
+```cpp
+static pe_detection_result detect_from_file(
+    const std::filesystem::path& file
+)
+
+static pe_detection_result detect_from_memory(
+    uint64_t base_address,
+    uint64_t image_size
+)
+
+static execution_mode determine_execution_mode(
+    winpe::pe_arch executable_arch
+)
+```
+
+### module_mapping_strategy
+
+Abstract base class for PE mapping strategies.
+
+```cpp
+virtual mapped_module map_from_file(
+    memory_manager& memory,
+    std::filesystem::path file,
+    windows_path module_path
+) = 0
+
+virtual mapped_module map_from_memory(
+    memory_manager& memory,
+    uint64_t base_address,
+    uint64_t image_size,
+    windows_path module_path
+) = 0
+```
+
+Implementations:
+- `pe32_mapping_strategy` - Maps 32-bit PE files
+- `pe64_mapping_strategy` - Maps 64-bit PE files
+
+## Usage Example
+
+```cpp
+// Create module manager
+module_manager::callbacks callbacks;
+callbacks.on_module_load.add([](mapped_module& mod) {
+    printf("Loaded: %s at 0x%llx\n", mod.name.c_str(), mod.image_base);
+});
+
+module_manager modules(memory, file_system, callbacks);
+
+// Load main executable and system modules
+modules.map_main_modules(
+    windows_path(LR"(C:\Windows\System32\notepad.exe)"),
+    version_manager,
+    context,
+    logger
+);
+
+// Load a DLL dynamically
+auto* kernel32 = modules.map_module(
+    windows_path(LR"(C:\Windows\System32\kernel32.dll)"),
+    logger
+);
+
+if (kernel32) {
+    printf("kernel32.dll loaded at 0x%llx\n", kernel32->image_base);
+}
+
+// Find module by address
+if (auto* mod = modules.find_by_address(0x7FFF12345678)) {
+    printf("Address belongs to: %s\n", mod->name.c_str());
+}
+
+// Check execution mode
+if (modules.is_wow64_process()) {
+    printf("Running in WOW64 mode\n");
+}
+```
+
+## See Also
+
+- [process_context](/api/process-context) - Process state management
+- [file_system](/api/file-system) - Virtual file system

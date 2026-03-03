@@ -1,0 +1,528 @@
+---
+title: GDB Integration
+description: Debug emulated Windows applications using GDB, LLDB, IDA Pro, and VS Code through Sogen's GDB stub
+---
+
+# GDB Integration
+
+Sogen implements the GDB Remote Serial Protocol, enabling you to debug emulated Windows applications using industry-standard debugging tools including GDB, LLDB, IDA Pro, and Visual Studio Code.
+
+## Overview
+
+The GDB stub allows debuggers to:
+- Set breakpoints (software and hardware)
+- Single-step through code
+- Read and write memory
+- Inspect and modify registers
+- View loaded libraries
+- Debug multi-threaded applications
+
+## Starting the GDB Server
+
+When running Sogen with the `-d` flag, it starts a GDB server on port 28960:
+
+```bash
+analyzer.exe -d C:\path\to\program.exe
+```
+
+The emulator will pause and wait for a debugger to connect before starting execution.
+
+## GDB Stub Architecture
+
+### Debugging Handler Interface
+
+The GDB stub works through the `debugging_handler` interface:
+
+```cpp
+// From src/gdb-stub/gdb_stub.hpp:30-83
+struct debugging_handler
+{
+    virtual action run() = 0;
+    virtual action singlestep() = 0;
+    
+    virtual size_t get_register_count() = 0;
+    virtual size_t get_max_register_size() = 0;
+    
+    virtual size_t read_register(size_t reg, void* data, size_t max_length) = 0;
+    virtual size_t write_register(size_t reg, const void* data, size_t size) = 0;
+    
+    virtual bool read_memory(uint64_t address, void* data, size_t length) = 0;
+    virtual bool write_memory(uint64_t address, const void* data, size_t length) = 0;
+    
+    virtual bool set_breakpoint(breakpoint_type type, uint64_t address, size_t size) = 0;
+    virtual bool delete_breakpoint(breakpoint_type type, uint64_t address, size_t size) = 0;
+    
+    virtual std::vector<uint32_t> get_thread_ids() = 0;
+    virtual uint32_t get_current_thread_id() = 0;
+    virtual bool switch_to_thread(uint32_t thread_id) = 0;
+    
+    virtual std::vector<library_info> get_libraries() = 0;
+};
+```
+
+### Breakpoint Types
+
+Sogen supports multiple breakpoint types:
+
+```cpp
+// From src/gdb-stub/gdb_stub.hpp:14-22
+enum class breakpoint_type : uint8_t
+{
+    software = 0,              // Software breakpoint (INT3)
+    hardware_exec = 1,         // Hardware execution breakpoint
+    hardware_write = 2,        // Hardware write watchpoint
+    hardware_read = 3,         // Hardware read watchpoint
+    hardware_read_write = 4,   // Hardware access watchpoint
+};
+```
+
+### Connection Handling
+
+The stub accepts connections on a TCP socket:
+
+```cpp
+// From src/gdb-stub/gdb_stub.cpp:699-709
+bool run_gdb_stub(const network::address& bind_address, debugging_handler& handler)
+{
+    auto client = accept_client(bind_address, should_stop);
+    if (!client) {
+        return false;
+    }
+    
+    // Process GDB protocol packets
+    while (!should_stop()) {
+        const auto packet = connection.get_packet();
+        process_packet(c, *packet);
+    }
+}
+```
+
+## Connecting with GDB
+
+### 1. Start Sogen in Debug Mode
+
+```bash
+analyzer.exe -d C:\Windows\System32\notepad.exe
+```
+
+Output:
+```
+Listening for debugger on 127.0.0.1:28960...
+```
+
+### 2. Connect GDB
+
+```bash
+gdb
+(gdb) target remote localhost:28960
+(gdb) continue
+```
+
+### 3. Set Breakpoints
+
+```gdb
+# Break at address
+(gdb) break *0x7ff700001000
+
+# Break at symbol (if symbols loaded)
+(gdb) break CreateFileW
+
+# Hardware watchpoint
+(gdb) watch *0x7ff700002000
+```
+
+### 4. Inspect State
+
+```gdb
+# View registers
+(gdb) info registers
+
+# Read memory
+(gdb) x/32x 0x7ff700001000
+
+# View threads
+(gdb) info threads
+
+# Switch threads
+(gdb) thread 2
+```
+
+## Connecting with LLDB
+
+LLDB uses the same GDB protocol:
+
+```bash
+lldb
+(lldb) gdb-remote localhost:28960
+(lldb) continue
+```
+
+### LLDB Commands
+
+```lldb
+# Set breakpoint
+(lldb) breakpoint set --address 0x7ff700001000
+
+# View registers
+(lldb) register read
+
+# Read memory
+(lldb) memory read --size 4 --format x --count 32 0x7ff700001000
+
+# Single step
+(lldb) thread step-inst
+```
+
+## Connecting with IDA Pro
+
+IDA Pro has excellent GDB stub support:
+
+### 1. Start Remote Debugging
+
+1. Start Sogen in debug mode
+2. In IDA: **Debugger** → **Attach** → **Remote GDB debugger**
+3. Set hostname: `localhost`
+4. Set port: `28960`
+5. Click **OK**
+
+### 2. Configure Architecture
+
+IDA should auto-detect x86-64, but verify:
+- **Debugger** → **Debugger options**
+- Ensure "x86-64" is selected
+
+### 3. Debug Session
+
+Once connected:
+- Set breakpoints by pressing `F2`
+- Step over with `F8`
+- Step into with `F7`
+- Run with `F9`
+- View registers in **Debugger** → **Registers**
+- View memory in **Debugger** → **Memory map**
+
+### Loading Symbols in IDA
+
+The GDB stub reports loaded libraries:
+
+```cpp
+// From src/gdb-stub/gdb_stub.cpp:159-171
+void handle_libraries(const debugging_context& c, const std::string_view payload)
+{
+    std::string xml = "<library-list version=\"1.0\">\n";
+    
+    for (const auto& library : c.handler.get_libraries()) {
+        xml += "<library name=\"" + escape_xml(library.name) + 
+               \"><segment address=\"0x" + 
+               utils::string::to_hex_number(library.segment_address) + 
+               "\"/></library>\n";
+    }
+    
+    xml += "</library-list>";
+}
+```
+
+IDA will automatically load symbols for recognized DLLs.
+
+## Connecting with VS Code
+
+Visual Studio Code can debug through the GDB protocol using the C/C++ extension.
+
+### 1. Install Extension
+
+Install the **C/C++** extension by Microsoft.
+
+### 2. Create Launch Configuration
+
+Create `.vscode/launch.json`:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Sogen Debug",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "C:\\path\\to\\target.exe",
+      "miDebuggerServerAddress": "localhost:28960",
+      "miDebuggerPath": "C:\\path\\to\\gdb.exe",
+      "cwd": "${workspaceFolder}",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 3. Start Debugging
+
+1. Start Sogen: `analyzer.exe -d target.exe`
+2. In VS Code: Press `F5` or **Run** → **Start Debugging**
+3. Use the Debug toolbar to step through code
+
+### 4. Set Breakpoints
+
+Click in the gutter next to line numbers to set breakpoints. VS Code will translate these to memory addresses.
+
+## Protocol Details
+
+### Supported Commands
+
+The GDB stub implements these GDB Remote Serial Protocol commands:
+
+| Command | Description | Source Reference |
+|---------|-------------|------------------|
+| `?` | Stop reason | `gdb_stub.cpp:634-636` |
+| `c` | Continue | `gdb_stub.cpp:612-615` |
+| `s` | Single step | `gdb_stub.cpp:617-619` |
+| `g` | Read registers | `gdb_stub.cpp:642-644` |
+| `G` | Write registers | `gdb_stub.cpp:646-648` |
+| `p` | Read single register | `gdb_stub.cpp:650-652` |
+| `P` | Write single register | `gdb_stub.cpp:654-656` |
+| `m` | Read memory | `gdb_stub.cpp:658-660` |
+| `M` | Write memory | `gdb_stub.cpp:662-664` |
+| `X` | Write memory (binary) | `gdb_stub.cpp:666-668` |
+| `Z` | Set breakpoint | `gdb_stub.cpp:629-632` |
+| `z` | Remove breakpoint | `gdb_stub.cpp:629-632` |
+| `H` | Set thread | `gdb_stub.cpp:670-672` |
+| `qSupported` | Feature negotiation | `gdb_stub.cpp:218-220` |
+| `qXfer:features` | Target description | `gdb_stub.cpp:196-198` |
+| `qXfer:libraries` | Library list | `gdb_stub.cpp:200-202` |
+| `qC` | Current thread | `gdb_stub.cpp:234-237` |
+| `qfThreadInfo` | Thread list | `gdb_stub.cpp:243-254` |
+| `vCont` | Extended continue | `gdb_stub.cpp:372-387` |
+
+### Register Access
+
+Registers are accessed by index:
+
+```cpp
+// From gdb_stub.cpp:390-413
+void read_registers(const debugging_context& c)
+{
+    std::string response{};
+    std::vector<std::byte> data{};
+    data.resize(c.handler.get_max_register_size());
+    
+    const auto registers = c.handler.get_register_count();
+    
+    for (size_t i = 0; i < registers; ++i) {
+        const auto size = c.handler.read_register(i, data.data(), data.size());
+        const std::span register_data(data.data(), size);
+        response.append(utils::string::to_hex_string(register_data));
+    }
+    
+    c.connection.send_reply(response);
+}
+```
+
+### Memory Operations
+
+Memory reads are limited to 4KB per request:
+
+```cpp
+// From gdb_stub.cpp:479-502
+void read_memory(const debugging_context& c, const std::string& payload)
+{
+    uint64_t address{};
+    size_t size{};
+    sscanf_s(payload.c_str(), "%" PRIx64 ",%zx", &address, &size);
+    
+    if (size > 0x1000) {  // 4KB limit
+        c.connection.send_reply("E01");
+        return;
+    }
+    
+    std::vector<std::byte> data{};
+    data.resize(size);
+    
+    const auto res = c.handler.read_memory(address, data.data(), data.size());
+    if (!res) {
+        c.connection.send_reply("E01");
+        return;
+    }
+    
+    c.connection.send_reply(utils::string::to_hex_string(data));
+}
+```
+
+### Thread Support
+
+Multiple threads are supported:
+
+```cpp
+// From gdb_stub.cpp:578-604
+void switch_to_thread(const debugging_context& c, const std::string_view payload)
+{
+    uint32_t id{};
+    sscanf_s(std::string(payload.substr(1)).c_str(), "%x", &id);
+    
+    const auto operation = payload[0];
+    if (operation == 'c') {  // Continuation thread
+        c.state.continuation_thread = id;
+        c.connection.send_reply("OK");
+    }
+    else if (operation == 'g') {  // Query thread
+        const auto res = id == 0 || c.handler.switch_to_thread(id);
+        c.connection.send_reply(res ? "OK" : "E01");
+    }
+}
+```
+
+## Advanced Features
+
+### Asynchronous Interrupts
+
+The debugger can interrupt execution at any time:
+
+```cpp
+// From gdb_stub.cpp:711-723
+async_handler async{[&](std::atomic_bool& can_run) {
+    while (can_run) {
+        const auto data = client.receive(1);
+        
+        if (is_interrupt_packet(data)) {
+            handler.on_interrupt();
+            can_run = false;
+        }
+    }
+}};
+```
+
+Press `Ctrl+C` in GDB to trigger an interrupt.
+
+### Target Description
+
+The stub provides x86-64 register descriptions:
+
+```cpp
+// From gdb_stub.cpp:101-114
+void handle_features(const debugging_context& c, const std::string_view payload)
+{
+    const auto [command, args] = split_string(payload, ':');
+    
+    if (command != "read") {
+        c.connection.send_reply({});
+        return;
+    }
+    
+    const auto [file, data] = split_string(args, ':');
+    const auto target_description = c.handler.get_target_description(file);
+    send_xfer_data(c.connection, std::string(data), target_description);
+}
+```
+
+### Library Notification
+
+Debuggers are notified when libraries are loaded:
+
+```cpp
+// From gdb_stub.cpp:302-324
+void signal_stop(const debugging_context& c)
+{
+    std::string reply = "T05";  // SIGTRAP
+    
+    if (c.handler.should_signal_library()) {
+        reply += "library:;";
+    }
+    
+    const auto id = c.handler.get_current_thread_id();
+    reply += "thread:" + utils::string::to_hex_number(id) + ";";
+    
+    c.connection.send_reply(reply);
+}
+```
+
+## Debugging Tips
+
+### Finding Entry Points
+
+```gdb
+# Break at program entry
+(gdb) break *$rip
+(gdb) continue
+
+# Break at main
+(gdb) break main
+```
+
+### Debugging Syscalls
+
+Set breakpoints on syscall instructions:
+
+```gdb
+# Find syscalls
+(gdb) x/100i $rip
+
+# Break before syscall
+(gdb) break *0x<address_before_syscall>
+```
+
+### Watching Memory
+
+Hardware watchpoints track memory changes:
+
+```gdb
+# Watch 8 bytes
+(gdb) watch *0x7ff700002000
+
+# Watch with condition
+(gdb) watch *0x7ff700002000 if *0x7ff700002000 == 0x41414141
+```
+
+### Examining Strings
+
+Windows uses UTF-16 strings:
+
+```gdb
+# View wide string
+(gdb) x/32h 0x<string_address>
+
+# Or in LLDB
+(lldb) memory read --size 2 --format x 0x<string_address>
+```
+
+## Troubleshooting
+
+### Connection Refused
+
+Ensure:
+- Sogen is running with `-d` flag
+- Firewall allows connections to port 28960
+- You're connecting to `localhost:28960`
+
+### Breakpoints Not Working
+
+Check:
+- Address is valid and executable
+- Code hasn't been relocated
+- Using correct breakpoint type for the operation
+
+### Register Values Incorrect
+
+The GDB stub reports registers in little-endian byte order. Most debuggers handle this automatically.
+
+### Cannot Step Over Instructions
+
+Some complex instructions may require single-stepping (`stepi` in GDB) instead of stepping over.
+
+## Source Code Reference
+
+Key files:
+- `src/gdb-stub/gdb_stub.hpp` - Main interface
+- `src/gdb-stub/gdb_stub.cpp` - Protocol implementation  
+- `src/gdb-stub/connection_handler.hpp` - Network handling
+- `src/gdb-stub/stream_processor.hpp` - Packet parsing
+- `src/gdb-stub/async_handler.hpp` - Interrupt handling
+
+## Next Steps
+
+- Explore [State Management](/advanced/state-management) for debugging with snapshots
+- Learn about [Fuzzing](/advanced/fuzzing) to find bugs to debug
+- See [Custom Backends](/advanced/custom-backends) for backend-specific debugging considerations

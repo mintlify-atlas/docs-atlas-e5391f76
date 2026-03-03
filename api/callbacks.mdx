@@ -1,0 +1,507 @@
+---
+title: 'emulator_callbacks'
+description: 'Event callbacks for monitoring and controlling emulator behavior'
+---
+
+## Overview
+
+The `emulator_callbacks` struct provides a comprehensive set of optional callback functions for monitoring and controlling Windows emulator behavior. Callbacks enable instrumentation, debugging, and custom behavior during emulation.
+
+## Definition
+
+```cpp
+struct emulator_callbacks : module_manager::callbacks, 
+                             process_context::callbacks {
+    using continuation = instruction_hook_continuation;
+    
+    // ... callback fields
+};
+```
+
+Inherits callbacks from:
+- `module_manager::callbacks` - Module loading/unloading events
+- `process_context::callbacks` - Process and thread events
+
+**Source:** windows_emulator.hpp:21
+
+## Callback Types
+
+All callbacks use `opt_func` (alias for `utils::optional_function`) which allows them to be unset (null) by default.
+
+```cpp
+#define opt_func utils::optional_function
+```
+
+## Exception Callbacks
+
+### on_exception
+
+```cpp
+opt_func<void()> on_exception{}
+```
+
+Called when an exception occurs during emulation.
+
+**Parameters:** None
+
+**Source:** windows_emulator.hpp:25
+
+**Example:**
+```cpp
+callbacks.on_exception = []() {
+    printf("Exception occurred\n");
+};
+```
+
+## Memory Callbacks
+
+### on_memory_protect
+
+```cpp
+opt_func<void(
+    uint64_t address,
+    uint64_t length,
+    memory_permission
+)> on_memory_protect{}
+```
+
+Called when memory protection is changed.
+
+<ParamField path="address" type="uint64_t">
+  Starting address of the memory region
+</ParamField>
+
+<ParamField path="length" type="uint64_t">
+  Size of the memory region in bytes
+</ParamField>
+
+<ParamField path="memory_permission" type="memory_permission">
+  New memory protection flags (read/write/exec)
+</ParamField>
+
+**Source:** windows_emulator.hpp:27
+
+**Example:**
+```cpp
+callbacks.on_memory_protect = [](uint64_t addr, uint64_t len, memory_permission perm) {
+    printf("Memory protect: 0x%llx, size: 0x%llx\n", addr, len);
+};
+```
+
+### on_memory_allocate
+
+```cpp
+opt_func<void(
+    uint64_t address,
+    uint64_t length,
+    memory_permission,
+    bool commit
+)> on_memory_allocate{}
+```
+
+Called when memory is allocated.
+
+<ParamField path="address" type="uint64_t">
+  Starting address of the allocated region
+</ParamField>
+
+<ParamField path="length" type="uint64_t">
+  Size of the allocation in bytes
+</ParamField>
+
+<ParamField path="memory_permission" type="memory_permission">
+  Memory protection flags for the allocation
+</ParamField>
+
+<ParamField path="commit" type="bool">
+  Whether the memory is committed (true) or just reserved (false)
+</ParamField>
+
+**Source:** windows_emulator.hpp:28
+
+**Example:**
+```cpp
+callbacks.on_memory_allocate = [](uint64_t addr, uint64_t len, 
+                                   memory_permission perm, bool commit) {
+    printf("Allocated 0x%llx bytes at 0x%llx (commit: %d)\n", len, addr, commit);
+};
+```
+
+### on_memory_violate
+
+```cpp
+opt_func<void(
+    uint64_t address,
+    uint64_t length,
+    memory_operation,
+    memory_violation_type type
+)> on_memory_violate{}
+```
+
+Called when a memory access violation occurs.
+
+<ParamField path="address" type="uint64_t">
+  Address where the violation occurred
+</ParamField>
+
+<ParamField path="length" type="uint64_t">
+  Size of the attempted access
+</ParamField>
+
+<ParamField path="memory_operation" type="memory_operation">
+  Type of operation (read/write/exec)
+</ParamField>
+
+<ParamField path="type" type="memory_violation_type">
+  Violation type (unmapped or protection violation)
+</ParamField>
+
+**Source:** windows_emulator.hpp:29
+
+**Example:**
+```cpp
+callbacks.on_memory_violate = [](uint64_t addr, uint64_t len,
+                                  memory_operation op, memory_violation_type type) {
+    printf("Memory violation at 0x%llx\n", addr);
+};
+```
+
+## CPU Instruction Callbacks
+
+### on_rdtsc
+
+```cpp
+opt_func<void()> on_rdtsc{}
+```
+
+Called when the RDTSC (Read Time-Stamp Counter) instruction is executed.
+
+**Parameters:** None
+
+**Source:** windows_emulator.hpp:31
+
+**Example:**
+```cpp
+callbacks.on_rdtsc = []() {
+    printf("RDTSC executed\n");
+};
+```
+
+### on_rdtscp
+
+```cpp
+opt_func<void()> on_rdtscp{}
+```
+
+Called when the RDTSCP (Read Time-Stamp Counter and Processor ID) instruction is executed.
+
+**Parameters:** None
+
+**Source:** windows_emulator.hpp:32
+
+**Example:**
+```cpp
+callbacks.on_rdtscp = []() {
+    printf("RDTSCP executed\n");
+};
+```
+
+### on_instruction
+
+```cpp
+opt_func<void(uint64_t address)> on_instruction{}
+```
+
+Called before each instruction is executed.
+
+<ParamField path="address" type="uint64_t">
+  Virtual address of the instruction being executed
+</ParamField>
+
+**Source:** windows_emulator.hpp:39
+
+**Example:**
+```cpp
+callbacks.on_instruction = [](uint64_t addr) {
+    printf("Executing instruction at 0x%llx\n", addr);
+};
+```
+
+**Note:** This callback can significantly slow down emulation if enabled for all instructions.
+
+## System Call Callbacks
+
+### on_syscall
+
+```cpp
+opt_func<continuation(
+    uint32_t syscall_id,
+    std::string_view syscall_name
+)> on_syscall{}
+```
+
+Called when a system call is about to be executed.
+
+<ParamField path="syscall_id" type="uint32_t">
+  The system call number/ID
+</ParamField>
+
+<ParamField path="syscall_name" type="std::string_view">
+  Name of the system call (e.g., "NtCreateFile")
+</ParamField>
+
+**Returns:** `instruction_hook_continuation` indicating whether to execute or skip the syscall
+- `instruction_hook_continuation::run_instruction` - Execute the syscall
+- `instruction_hook_continuation::skip_instruction` - Skip the syscall
+
+**Source:** windows_emulator.hpp:33
+
+**Example:**
+```cpp
+callbacks.on_syscall = [](uint32_t id, std::string_view name) {
+    printf("Syscall: %s (0x%x)\n", name.data(), id);
+    
+    // Block specific syscalls
+    if (name == "NtTerminateProcess") {
+        return instruction_hook_continuation::skip_instruction;
+    }
+    
+    return instruction_hook_continuation::run_instruction;
+};
+```
+
+## I/O and Activity Callbacks
+
+### on_stdout
+
+```cpp
+opt_func<void(std::string_view data)> on_stdout{}
+```
+
+Called when the emulated process writes to stdout.
+
+<ParamField path="data" type="std::string_view">
+  The data written to stdout
+</ParamField>
+
+**Source:** windows_emulator.hpp:34
+
+**Example:**
+```cpp
+callbacks.on_stdout = [](std::string_view data) {
+    printf("[STDOUT] %.*s", (int)data.size(), data.data());
+};
+```
+
+### on_debug_string
+
+```cpp
+opt_func<void(std::string_view message)> on_debug_string{}
+```
+
+Called when the emulated process outputs a debug string (via OutputDebugString).
+
+<ParamField path="message" type="std::string_view">
+  The debug message
+</ParamField>
+
+**Source:** windows_emulator.hpp:38
+
+**Example:**
+```cpp
+callbacks.on_debug_string = [](std::string_view msg) {
+    printf("[DEBUG] %.*s\n", (int)msg.size(), msg.data());
+};
+```
+
+### on_ioctrl
+
+```cpp
+opt_func<void(
+    io_device& device,
+    std::u16string_view device_name,
+    ULONG code
+)> on_ioctrl{}
+```
+
+Called when an IOCTL (I/O Control) operation is performed on a device.
+
+<ParamField path="device" type="io_device&">
+  Reference to the I/O device
+</ParamField>
+
+<ParamField path="device_name" type="std::u16string_view">
+  Name of the device (UTF-16)
+</ParamField>
+
+<ParamField path="code" type="ULONG">
+  IOCTL control code
+</ParamField>
+
+**Source:** windows_emulator.hpp:40
+
+**Example:**
+```cpp
+callbacks.on_ioctrl = [](io_device& dev, std::u16string_view name, ULONG code) {
+    wprintf(L"IOCTL on device %.*s: 0x%lx\n", 
+            (int)name.size(), name.data(), code);
+};
+```
+
+## Activity Tracking Callbacks
+
+### on_generic_access
+
+```cpp
+opt_func<void(
+    std::string_view type,
+    std::u16string_view name
+)> on_generic_access{}
+```
+
+Called when the emulator accesses a generic resource (file, registry key, etc.).
+
+<ParamField path="type" type="std::string_view">
+  Type of resource being accessed (e.g., "file", "registry")
+</ParamField>
+
+<ParamField path="name" type="std::u16string_view">
+  Name/path of the resource (UTF-16)
+</ParamField>
+
+**Source:** windows_emulator.hpp:35
+
+**Example:**
+```cpp
+callbacks.on_generic_access = [](std::string_view type, std::u16string_view name) {
+    wprintf(L"Access [%s]: %.*s\n", 
+            type.data(), (int)name.size(), name.data());
+};
+```
+
+### on_generic_activity
+
+```cpp
+opt_func<void(std::string_view description)> on_generic_activity{}
+```
+
+Called when generic activity occurs in the emulator.
+
+<ParamField path="description" type="std::string_view">
+  Description of the activity
+</ParamField>
+
+**Source:** windows_emulator.hpp:36
+
+**Example:**
+```cpp
+callbacks.on_generic_activity = [](std::string_view desc) {
+    printf("Activity: %.*s\n", (int)desc.size(), desc.data());
+};
+```
+
+### on_suspicious_activity
+
+```cpp
+opt_func<void(std::string_view description)> on_suspicious_activity{}
+```
+
+Called when potentially suspicious or malicious activity is detected.
+
+<ParamField path="description" type="std::string_view">
+  Description of the suspicious activity
+</ParamField>
+
+**Source:** windows_emulator.hpp:37
+
+**Example:**
+```cpp
+callbacks.on_suspicious_activity = [](std::string_view desc) {
+    fprintf(stderr, "[WARNING] Suspicious: %.*s\n", 
+            (int)desc.size(), desc.data());
+};
+```
+
+## Related Types
+
+### instruction_hook_continuation
+
+```cpp
+enum class instruction_hook_continuation : bool {
+    run_instruction = false,
+    skip_instruction = true,
+};
+```
+
+Return value for instruction hooks indicating whether to execute or skip.
+
+### memory_operation
+
+```cpp
+using memory_operation = memory_permission;
+```
+
+Alias for `memory_permission` when used to describe the type of memory access.
+
+### memory_violation_type
+
+```cpp
+enum class memory_violation_type : uint8_t {
+    unmapped,
+    protection,
+};
+```
+
+Type of memory violation:
+- `unmapped` - Accessing unmapped memory
+- `protection` - Permission violation (e.g., writing to read-only memory)
+
+## Usage Example
+
+```cpp
+#include <windows-emulator/windows_emulator.hpp>
+
+emulator_callbacks callbacks;
+
+// Track syscalls
+callbacks.on_syscall = [](uint32_t id, std::string_view name) {
+    printf("Syscall: %s (0x%x)\n", name.data(), id);
+    return instruction_hook_continuation::run_instruction;
+};
+
+// Track memory allocations
+callbacks.on_memory_allocate = [](uint64_t addr, uint64_t len,
+                                   memory_permission perm, bool commit) {
+    printf("Allocated 0x%llx bytes at 0x%llx\n", len, addr);
+};
+
+// Capture stdout
+callbacks.on_stdout = [](std::string_view data) {
+    printf("[STDOUT] %.*s", (int)data.size(), data.data());
+};
+
+// Detect suspicious activity
+callbacks.on_suspicious_activity = [](std::string_view desc) {
+    fprintf(stderr, "[ALERT] %.*s\n", (int)desc.size(), desc.data());
+};
+
+// Create emulator with callbacks
+auto emu = std::make_unique<x86_64_emulator>();
+windows_emulator win_emu(std::move(emu), {}, callbacks);
+```
+
+## Performance Considerations
+
+- Callbacks like `on_instruction` are called very frequently and can significantly impact performance
+- Keep callback implementations lightweight
+- Avoid heavy I/O operations in hot-path callbacks
+- Use filtering in callbacks to minimize overhead
+- Consider batching output instead of printing on every callback
+
+## Notes
+
+- All callbacks are optional (can be left unset/null)
+- Callbacks are synchronous and block emulation
+- Return values (like in `on_syscall`) control emulator behavior
+- Some callbacks inherit from `module_manager::callbacks` and `process_context::callbacks`
+- UTF-16 strings (std::u16string_view) are used for Windows path/name parameters

@@ -1,0 +1,198 @@
+---
+title: Running Programs
+description: Learn how to execute Windows programs in Sogen using analyzer.exe
+---
+
+The Sogen emulator runs Windows executables through the `analyzer.exe` tool, which provides comprehensive control and monitoring capabilities during program execution.
+
+## Basic Usage
+
+To run a Windows program in Sogen, use the following syntax:
+
+```bash
+analyzer.exe C:\path\to\program.exe
+```
+
+### Running with Arguments
+
+Pass command-line arguments to the target program:
+
+```bash
+analyzer.exe C:\myapp.exe arg1 arg2 "argument with spaces"
+```
+
+## Command-Line Options
+
+### Emulation Configuration
+
+<Steps>
+
+### Set the Emulation Root
+
+The emulation root defines where Sogen looks for system files and creates the virtual filesystem:
+
+```bash
+analyzer.exe -e path/to/root myapp.exe
+```
+
+On non-Windows platforms, the emulation root is required.
+
+### Configure Registry Path
+
+Specify a custom registry directory (default: `./registry`):
+
+```bash
+analyzer.exe -r ./custom-registry myapp.exe
+```
+
+Create a registry dump using the [grab-registry.bat](https://github.com/momo5502/sogen/blob/main/src/tools/grab-registry.bat) script as administrator.
+
+### Map File Paths
+
+Map Windows paths to host filesystem paths using `-p` or `--path`:
+
+```bash
+analyzer.exe -e path/to/root -p "c:/sample.exe" "/path/to/real/sample.exe" c:/sample.exe
+```
+
+This is useful for analyzing specific files without copying them into the emulation root.
+
+</Steps>
+
+## Logging and Analysis Options
+
+### Verbosity Levels
+
+```bash
+# Silent mode - minimal output
+analyzer.exe -s myapp.exe
+
+# Verbose logging - detailed execution information
+analyzer.exe -v myapp.exe
+
+# Concise logging - reduced log volume
+analyzer.exe -c myapp.exe
+```
+
+### Module Tracking
+
+Track specific modules during execution:
+
+```bash
+# Track single module
+analyzer.exe -m kernel32.dll myapp.exe
+
+# Track multiple modules
+analyzer.exe -m kernel32.dll -m ntdll.dll myapp.exe
+```
+
+### Advanced Analysis
+
+```bash
+# Log read/write access to executable memory sections
+analyzer.exe -x myapp.exe
+
+# Log read access to foreign module memory
+analyzer.exe -f myapp.exe
+
+# Buffer stdout for batch processing
+analyzer.exe -b myapp.exe
+
+# Print instruction summary for analyzed modules
+analyzer.exe -is myapp.exe
+
+# Skip regular syscall logging
+analyzer.exe -ss myapp.exe
+```
+
+## State Management
+
+### Creating Snapshots
+
+Snapshots capture the complete emulator state and can be restored later:
+
+1. Run the program with CTRL+C interrupt
+2. When prompted, type `y` to create a snapshot
+3. The snapshot is saved for later use
+
+### Loading Snapshots
+
+Restore a previously saved snapshot:
+
+```bash
+analyzer.exe -a path/to/snapshot.dump
+```
+
+### Loading Minidumps
+
+Analyze Windows minidump files:
+
+```bash
+analyzer.exe --minidump path/to/crash.dmp
+```
+
+Minidumps are loaded into the emulator without starting execution, allowing inspection of crash state.
+
+## Advanced Features
+
+### Tenet Tracer Integration
+
+Enable execution tracing for [Tenet](https://github.com/gaasedelen/tenet) (IDA Pro plugin):
+
+```bash
+analyzer.exe -t myapp.exe
+```
+
+This generates `tenet_trace.log` containing the execution trace.
+
+### Reproducible Execution
+
+Stub clocks and randomness sources for deterministic execution:
+
+```bash
+analyzer.exe -rep myapp.exe
+```
+
+Useful for analyzing anti-debugging techniques and ensuring consistent behavior across runs.
+
+### Ignore Functions
+
+Skip logging for specific functions:
+
+```bash
+analyzer.exe -i "NtQuerySystemInformation,NtQueryInformationProcess" myapp.exe
+```
+
+## Complete Example
+
+Here's a comprehensive example combining multiple options:
+
+```bash
+analyzer.exe \
+  -e ./emulation-root \
+  -r ./registry \
+  -v \
+  -m malware.exe \
+  -x \
+  -f \
+  -p "c:/config.ini" "./configs/sample-config.ini" \
+  c:/malware.exe --server 192.168.1.1
+```
+
+This command:
+- Sets the emulation root to `./emulation-root`
+- Uses registry from `./registry`
+- Enables verbose logging
+- Tracks the `malware.exe` module
+- Logs executable memory access
+- Logs foreign module access
+- Maps a configuration file from the host system
+- Runs the malware with a command-line argument
+
+## Exit Status
+
+The analyzer exits with:
+- `0` - Program terminated with `STATUS_SUCCESS`
+- `1` - Program terminated with an error status or emulation failed
+
+The final exit status is displayed in green (success) or red (failure).

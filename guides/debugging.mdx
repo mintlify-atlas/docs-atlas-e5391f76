@@ -1,0 +1,357 @@
+---
+title: Debugging
+description: Debug Windows programs running in Sogen using GDB protocol integration
+---
+
+Sogen implements the GDB Remote Serial Protocol, allowing you to debug emulated Windows programs using industry-standard debugging tools like GDB, LLDB, IDA Pro, and Visual Studio Code.
+
+## Overview
+
+The GDB stub integration provides:
+- Full register access (read/write)
+- Memory inspection and modification
+- Breakpoint support (software and hardware)
+- Single-stepping execution
+- Thread enumeration and switching
+- Library/module information
+
+## Enabling GDB Mode
+
+### Basic GDB Mode
+
+Start the analyzer in debug mode:
+
+```bash
+analyzer.exe -d myapp.exe
+```
+
+By default, Sogen listens on `127.0.0.1:28960` for GDB connections.
+
+### Custom Host and Port
+
+Specify a custom bind address:
+
+```bash
+analyzer.exe -d --bind 0.0.0.0 --port 2345 myapp.exe
+```
+
+<Warning>
+Binding to `0.0.0.0` exposes the debugger to your network. Only use this in trusted environments.
+</Warning>
+
+### GDB Connection Flow
+
+<Steps>
+
+### Start analyzer in debug mode
+
+```bash
+analyzer.exe -d --port 28960 c:/target.exe
+```
+
+The analyzer waits for a debugger connection:
+
+```
+Waiting for GDB connection on 127.0.0.1:28960...
+```
+
+### Connect your debugger
+
+From GDB:
+
+```bash
+gdb
+(gdb) target remote 127.0.0.1:28960
+```
+
+### Begin debugging
+
+The emulator starts execution when the debugger connects. Use standard GDB commands to control execution.
+
+</Steps>
+
+## Using GDB
+
+### Connecting to Sogen
+
+```bash
+# Start GDB without a local binary
+gdb
+
+# Connect to the Sogen emulator
+(gdb) target remote 127.0.0.1:28960
+
+# Check current state
+(gdb) info registers
+(gdb) info threads
+```
+
+### Basic Debugging Commands
+
+```bash
+# Continue execution
+(gdb) continue
+
+# Single step
+(gdb) step
+(gdb) stepi
+
+# Set breakpoint
+(gdb) break *0x140001000
+
+# Examine memory
+(gdb) x/16xb 0x140001000
+(gdb) x/s 0x140001000
+
+# Examine registers  
+(gdb) info registers
+(gdb) print $rax
+(gdb) set $rax = 0x1234
+
+# Backtrace
+(gdb) backtrace
+```
+
+### Thread Debugging
+
+```bash
+# List all threads
+(gdb) info threads
+
+# Switch to thread
+(gdb) thread 2
+
+# Show current thread
+(gdb) thread
+```
+
+## Using LLDB
+
+LLDB also supports the GDB remote protocol:
+
+```bash
+# Start LLDB
+lldb
+
+# Connect to Sogen
+(lldb) gdb-remote 127.0.0.1:28960
+
+# Set breakpoint
+(lldb) breakpoint set --address 0x140001000
+
+# Continue
+(lldb) continue
+
+# Read memory
+(lldb) memory read 0x140001000
+
+# Read registers
+(lldb) register read
+```
+
+## Using IDA Pro
+
+IDA Pro provides excellent integration with GDB remote debugging.
+
+<Steps>
+
+### Start Sogen in debug mode
+
+```bash
+analyzer.exe -d --port 28960 c:/malware.exe
+```
+
+### Configure IDA Pro
+
+1. Open IDA Pro
+2. Go to **Debugger → Select debugger → Remote GDB debugger**
+3. Go to **Debugger → Process options**
+4. Set:
+   - **Hostname**: `127.0.0.1`
+   - **Port**: `28960`
+
+### Start debugging
+
+1. Press **F9** or click **Debugger → Start process**
+2. IDA connects to Sogen and begins debugging
+
+### Use IDA's debugging features
+
+- Set breakpoints (F2)
+- Step over (F8) / Step into (F7)
+- Run to cursor (F4)
+- View registers and stack in real-time
+- Analyze loaded modules
+
+</Steps>
+
+## Using Visual Studio Code
+
+VS Code can debug Sogen using the Native Debug extension.
+
+### Install Extension
+
+1. Install the "Native Debug" extension
+2. Create a `.vscode/launch.json` configuration
+
+### Configuration
+
+```json title=".vscode/launch.json"
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Sogen GDB",
+      "type": "gdb",
+      "request": "attach",
+      "executable": "./target.exe",
+      "target": "127.0.0.1:28960",
+      "remote": true,
+      "cwd": "${workspaceRoot}",
+      "valuesFormatting": "parseText"
+    }
+  ]
+}
+```
+
+### Debugging Workflow
+
+<Steps>
+
+### Start Sogen
+
+```bash
+analyzer.exe -d c:/target.exe
+```
+
+### Launch VS Code debugger
+
+1. Open the Run and Debug panel (Ctrl+Shift+D)
+2. Select "Sogen GDB" configuration
+3. Click Start Debugging (F5)
+
+### Debug normally
+
+Use VS Code's debugging interface:
+- Set breakpoints
+- View variables and call stack
+- Step through execution
+
+</Steps>
+
+## GDB Stub Implementation Details
+
+The GDB stub is implemented in `/src/gdb-stub/` and provides:
+
+### Supported Commands
+
+- **Memory operations**: Read (`m`), Write (`M`, `X`)
+- **Register operations**: Read all (`g`), Write all (`G`), Read single (`p`), Write single (`P`)
+- **Breakpoints**: Set (`Z`), Delete (`z`) for all types
+- **Execution control**: Continue (`c`), Step (`s`), Continue with signal (`S`)
+- **Thread operations**: Query (`qfThreadInfo`), Switch (`H`)
+- **Information queries**: Target description (`qXfer:features`), Libraries (`qXfer:libraries`), Executable path (`qXfer:exec-file`)
+
+### Breakpoint Types
+
+```cpp
+enum class breakpoint_type : uint8_t
+{
+    software = 0,           // Software breakpoint (INT3)
+    hardware_exec = 1,      // Hardware execution breakpoint
+    hardware_write = 2,     // Hardware write watchpoint
+    hardware_read = 3,      // Hardware read watchpoint
+    hardware_read_write = 4 // Hardware access watchpoint
+};
+```
+
+### Target Architecture
+
+Sogen exposes x86-64 (AMD64) architecture to the debugger with full register set including:
+- General purpose registers (RAX, RBX, RCX, etc.)
+- Segment registers (CS, DS, SS, ES, FS, GS)
+- Control registers
+- Instruction pointer (RIP)
+- Flags register (RFLAGS)
+
+## Advanced Debugging Techniques
+
+### Conditional Breakpoints
+
+```bash
+# Break when RAX equals specific value
+(gdb) break *0x140001000 if $rax == 0x1234
+
+# Break when memory contains value
+(gdb) break *0x140001000 if *(long*)0x140020000 == 0x5678
+```
+
+### Watchpoints
+
+```bash
+# Watch memory location for changes
+(gdb) watch *(long*)0x140020000
+
+# Watch memory for reads
+(gdb) rwatch *(long*)0x140020000
+
+# Watch for reads or writes
+(gdb) awatch *(long*)0x140020000
+```
+
+### Scripting
+
+Automate debugging with GDB Python scripts:
+
+```python title="debug_script.py"
+import gdb
+
+class BreakpointHandler(gdb.Breakpoint):
+    def __init__(self, spec):
+        super().__init__(spec)
+        
+    def stop(self):
+        rax = gdb.parse_and_eval('$rax')
+        print(f"RAX = {rax}")
+        return True  # Stop execution
+
+# Set breakpoint with handler
+BreakpointHandler('*0x140001000')
+
+# Continue execution
+gdb.execute('continue')
+```
+
+Load the script in GDB:
+
+```bash
+(gdb) source debug_script.py
+```
+
+## Troubleshooting
+
+### Connection Refused
+
+If the debugger cannot connect:
+
+1. Check that analyzer is running in debug mode (`-d`)
+2. Verify the correct host and port
+3. Check firewall settings
+4. Ensure no other service is using the port
+
+### Symbols Not Loading
+
+The GDB stub provides basic module information, but doesn't include full symbol data. To get symbols:
+
+1. Load the executable in your debugger separately
+2. Use IDA Pro to analyze the binary and debug simultaneously
+3. Generate symbol files from the PE executable
+
+### Breakpoints Not Working
+
+If breakpoints aren't triggering:
+
+1. Verify the address is within executable code
+2. Check that the module is loaded
+3. Use hardware breakpoints for memory-mapped regions
+4. Ensure the code hasn't been relocated

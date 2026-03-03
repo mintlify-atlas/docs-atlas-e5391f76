@@ -1,0 +1,465 @@
+---
+title: 'memory_interface'
+description: 'Memory read/write interface for emulator memory operations'
+---
+
+## Overview
+
+The `memory_interface` class provides methods for reading and writing emulator memory. It supports both raw memory operations and templated type-safe operations.
+
+## Class Definition
+
+```cpp
+class memory_interface {
+public:
+    virtual ~memory_interface() = default;
+    // ... methods
+};
+```
+
+**Source:** memory_interface.hpp:12
+
+## Core Virtual Methods
+
+### read_memory()
+
+```cpp
+virtual void read_memory(
+    uint64_t address,
+    void* data,
+    size_t size
+) const = 0
+```
+
+Reads memory from the emulator.
+
+<ParamField path="address" type="uint64_t" required>
+  Memory address to read from
+</ParamField>
+
+<ParamField path="data" type="void*" required>
+  Pointer to buffer to store the read data
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Number of bytes to read
+</ParamField>
+
+**Throws:** Exception if memory cannot be read
+
+**Source:** memory_interface.hpp:19
+
+### try_read_memory()
+
+```cpp
+virtual bool try_read_memory(
+    uint64_t address,
+    void* data,
+    size_t size
+) const = 0
+```
+
+Attempts to read memory without throwing exceptions.
+
+<ParamField path="address" type="uint64_t" required>
+  Memory address to read from
+</ParamField>
+
+<ParamField path="data" type="void*" required>
+  Pointer to buffer to store the read data
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Number of bytes to read
+</ParamField>
+
+**Returns:** `true` if read succeeded, `false` if memory is inaccessible
+
+**Source:** memory_interface.hpp:20
+
+### write_memory()
+
+```cpp
+virtual void write_memory(
+    uint64_t address,
+    const void* data,
+    size_t size
+) = 0
+```
+
+Writes memory to the emulator.
+
+<ParamField path="address" type="uint64_t" required>
+  Memory address to write to
+</ParamField>
+
+<ParamField path="data" type="const void*" required>
+  Pointer to data to write
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Number of bytes to write
+</ParamField>
+
+**Throws:** Exception if memory cannot be written
+
+**Source:** memory_interface.hpp:21
+
+### try_write_memory()
+
+```cpp
+virtual bool try_write_memory(
+    uint64_t address,
+    const void* data,
+    size_t size
+) = 0
+```
+
+Attempts to write memory without throwing exceptions.
+
+<ParamField path="address" type="uint64_t" required>
+  Memory address to write to
+</ParamField>
+
+<ParamField path="data" type="const void*" required>
+  Pointer to data to write
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Number of bytes to write
+</ParamField>
+
+**Returns:** `true` if write succeeded, `false` if memory is inaccessible
+
+**Source:** memory_interface.hpp:22
+
+## Template Methods
+
+### read_memory&lt;T&gt;() - Single Value
+
+```cpp
+template <typename T>
+T read_memory(const uint64_t address) const
+```
+
+Reads a typed value from memory.
+
+<ParamField path="address" type="uint64_t" required>
+  Memory address to read from
+</ParamField>
+
+**Template Parameters:**
+- `T` - Type of value to read (e.g., `uint32_t`, `int64_t`, custom struct)
+
+**Returns:** The value read from memory
+
+**Source:** memory_interface.hpp:32
+
+**Example:**
+```cpp
+uint32_t value = mem.read_memory<uint32_t>(0x1000);
+MyStruct s = mem.read_memory<MyStruct>(0x2000);
+```
+
+### read_memory&lt;T&gt;() - From Pointer
+
+```cpp
+template <typename T>
+T read_memory(const void* address) const
+```
+
+Reads a typed value from a pointer address.
+
+<ParamField path="address" type="const void*" required>
+  Pointer to memory address
+</ParamField>
+
+**Returns:** The value read from memory
+
+**Source:** memory_interface.hpp:40
+
+### read_memory() - Vector
+
+```cpp
+std::vector<std::byte> read_memory(
+    const uint64_t address,
+    const size_t size
+) const
+```
+
+Reads a buffer of bytes into a vector.
+
+<ParamField path="address" type="uint64_t" required>
+  Memory address to read from
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Number of bytes to read
+</ParamField>
+
+**Returns:** Vector containing the read bytes
+
+**Source:** memory_interface.hpp:46
+
+**Example:**
+```cpp
+auto data = mem.read_memory(0x1000, 256);
+```
+
+### write_memory&lt;T&gt;() - Single Value
+
+```cpp
+template <typename T>
+void write_memory(const uint64_t address, const T& value)
+```
+
+Writes a typed value to memory.
+
+<ParamField path="address" type="uint64_t" required>
+  Memory address to write to
+</ParamField>
+
+<ParamField path="value" type="const T&" required>
+  Value to write
+</ParamField>
+
+**Template Parameters:**
+- `T` - Type of value to write
+
+**Source:** memory_interface.hpp:61
+
+**Example:**
+```cpp
+mem.write_memory<uint32_t>(0x1000, 0xDEADBEEF);
+MyStruct s{...};
+mem.write_memory(0x2000, s);
+```
+
+### write_memory&lt;T&gt;() - To Pointer
+
+```cpp
+template <typename T>
+void write_memory(void* address, const T& value)
+```
+
+Writes a typed value to a pointer address.
+
+<ParamField path="address" type="void*" required>
+  Pointer to memory address
+</ParamField>
+
+<ParamField path="value" type="const T&" required>
+  Value to write
+</ParamField>
+
+**Source:** memory_interface.hpp:67
+
+### write_memory() - Buffer to Pointer
+
+```cpp
+void write_memory(
+    void* address,
+    const void* data,
+    const size_t size
+)
+```
+
+Writes a buffer to a pointer address.
+
+<ParamField path="address" type="void*" required>
+  Pointer to memory address
+</ParamField>
+
+<ParamField path="data" type="const void*" required>
+  Pointer to data to write
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Number of bytes to write
+</ParamField>
+
+**Source:** memory_interface.hpp:73
+
+## Memory Operations
+
+### move_memory()
+
+```cpp
+void move_memory(uint64_t dst, uint64_t src, size_t size)
+```
+
+Moves memory from one location to another, handling overlapping regions correctly.
+
+<ParamField path="dst" type="uint64_t" required>
+  Destination address
+</ParamField>
+
+<ParamField path="src" type="uint64_t" required>
+  Source address
+</ParamField>
+
+<ParamField path="size" type="size_t" required>
+  Number of bytes to move
+</ParamField>
+
+**Source:** memory_interface.hpp:78
+
+**Notes:**
+- Handles overlapping source and destination correctly
+- Copies from end to start if `src < dst` to prevent data corruption
+- No-op if `dst == src` or `size == 0`
+
+## Private Virtual Methods
+
+These methods are used internally by `memory_manager` and not intended for direct use:
+
+### map_mmio()
+
+```cpp
+virtual void map_mmio(
+    uint64_t address,
+    size_t size,
+    mmio_read_callback read_cb,
+    mmio_write_callback write_cb
+) = 0
+```
+
+Maps a memory-mapped I/O region with custom read/write callbacks.
+
+**Source:** memory_interface.hpp:25
+
+### map_memory()
+
+```cpp
+virtual void map_memory(
+    uint64_t address,
+    size_t size,
+    memory_permission permissions
+) = 0
+```
+
+Maps a memory region with specified permissions.
+
+**Source:** memory_interface.hpp:26
+
+### unmap_memory()
+
+```cpp
+virtual void unmap_memory(uint64_t address, size_t size) = 0
+```
+
+Unmaps a previously mapped memory region.
+
+**Source:** memory_interface.hpp:27
+
+### apply_memory_protection()
+
+```cpp
+virtual void apply_memory_protection(
+    uint64_t address,
+    size_t size,
+    memory_permission permissions
+) = 0
+```
+
+Changes memory protection on an existing mapping.
+
+**Source:** memory_interface.hpp:29
+
+## Related Types
+
+### memory_permission
+
+```cpp
+enum class memory_permission : uint8_t {
+    none = 0,
+    read = 1 << 0,
+    write = 1 << 1,
+    exec = 1 << 2,
+    read_write = read | write,
+    all = read | write | exec
+};
+```
+
+Memory permission flags that can be combined with bitwise OR.
+
+### MMIO Callbacks
+
+```cpp
+using mmio_read_callback = 
+    std::function<void(uint64_t addr, void* data, size_t size)>;
+
+using mmio_write_callback = 
+    std::function<void(uint64_t addr, const void* data, size_t size)>;
+```
+
+Callback types for memory-mapped I/O operations.
+
+## Usage Examples
+
+### Reading and Writing Values
+
+```cpp
+memory_interface& mem = emu.memory;
+
+// Write a 32-bit value
+mem.write_memory<uint32_t>(0x1000, 0x12345678);
+
+// Read it back
+uint32_t value = mem.read_memory<uint32_t>(0x1000);
+
+// Write a structure
+struct Point { int x, y; };
+Point p{10, 20};
+mem.write_memory(0x2000, p);
+
+// Read structure
+Point p2 = mem.read_memory<Point>(0x2000);
+```
+
+### Reading Buffers
+
+```cpp
+// Read 256 bytes into a vector
+auto buffer = mem.read_memory(0x1000, 256);
+
+// Read into existing buffer
+uint8_t data[64];
+mem.read_memory(0x2000, data, sizeof(data));
+```
+
+### Safe Memory Access
+
+```cpp
+// Try reading without exceptions
+uint8_t buffer[16];
+if (mem.try_read_memory(0x1000, buffer, sizeof(buffer))) {
+    // Success - process buffer
+} else {
+    // Memory not accessible
+}
+
+// Try writing
+if (!mem.try_write_memory(0x1000, data, size)) {
+    fprintf(stderr, "Failed to write to 0x%llx\n", address);
+}
+```
+
+### Moving Memory
+
+```cpp
+// Move 1024 bytes from 0x1000 to 0x2000
+mem.move_memory(0x2000, 0x1000, 1024);
+
+// Handles overlapping regions correctly
+mem.move_memory(0x1000, 0x1010, 100); // Overlapping - still works
+```
+
+## Notes
+
+- All addresses are 64-bit virtual addresses
+- Memory reads/writes may throw if the memory is unmapped or protected
+- Use `try_*` variants for non-throwing operations
+- Template methods use `sizeof(T)` to determine the size automatically
+- The `move_memory()` function correctly handles overlapping regions
+- MMIO operations are typically managed by `memory_manager`, not called directly

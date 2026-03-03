@@ -1,80 +1,329 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get Sogen running in minutes and emulate your first Windows program
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will help you get Sogen up and running quickly. We'll build the emulator, set up the required registry files, and run your first emulated program.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  This quick start focuses on Windows with Visual Studio. For other platforms, see the [Installation](/installation) guide.
 </Note>
+
+## Prerequisites
+
+- Windows operating system
+- Visual Studio 2022 (with C++ development tools)
+- Git
+- Administrator privileges (for registry dump)
+
+## Step 1: Clone the Repository
+
+First, clone Sogen with all its submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/momo5502/sogen.git
+cd sogen
+```
+
+<Warning>
+  Make sure to use `--recurse-submodules` as Sogen depends on several external libraries.
+</Warning>
+
+## Step 2: Generate the Visual Studio Solution
+
+Open an **x64 Development Command Prompt** and run:
+
+```bash
+cmake --preset=vs2022
+```
+
+This generates a Visual Studio solution at `build/vs2022/emulator.sln`.
+
+<Note>
+  The preset `vs2022` is configured for Visual Studio 2022. The build system will automatically download and configure dependencies.
+</Note>
+
+## Step 3: Build the Project
+
+You can build either from the command line or Visual Studio:
+
+<CodeGroup>
+
+```bash Command Line
+cmake --build --preset=release
+```
+
+```text Visual Studio
+1. Open build/vs2022/emulator.sln
+2. Select Release configuration
+3. Build -> Build Solution (or press F7)
+```
+
+</CodeGroup>
+
+The compiled binaries will be in `build/vs2022/artifacts/` (or `build/release/artifacts/` for command line builds).
+
+## Step 4: Create Registry Dump
+
+Sogen needs access to Windows registry data to emulate programs correctly.
+
+<Steps>
+  <Step title="Run as Administrator">
+    Right-click on Command Prompt and select "Run as administrator"
+  </Step>
+  
+  <Step title="Navigate to Sogen Directory">
+    ```bash
+    cd path\to\sogen
+    ```
+  </Step>
+  
+  <Step title="Execute Registry Dump Script">
+    ```bash
+    src\tools\grab-registry.bat
+    ```
+    
+    This creates a `registry` folder with the following files:
+    - `SYSTEM`
+    - `SECURITY`
+    - `SOFTWARE`
+    - `HARDWARE`
+    - `SAM`
+    - `NTUSER.DAT`
+  </Step>
+  
+  <Step title="Move Registry Folder">
+    Copy the `registry` folder to the artifacts directory:
+    ```bash
+    move registry build\vs2022\artifacts\registry
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  The `grab-registry.bat` script requires administrator privileges to access system registry hives.
+</Warning>
+
+## Step 5: Run Your First Program
+
+Now you're ready to emulate a Windows program!
+
+### Using the Test Sample
+
+Sogen includes a test sample that validates the emulator:
+
+```bash
+cd build\vs2022\artifacts
+analyzer.exe test-sample.exe
+```
+
+You should see output similar to:
+
+```text
+Using emulator backend: unicorn
+Running test 'I/O': Success
+Running test 'Dir I/O': Success
+Running test 'APIs': Success
+Running test 'Working Directory': Success
+Running test 'Registry': Success
+Running test 'System Info': Success
+Running test 'Monitor Info': Success
+Running test 'Time Zone': Success
+Running test 'Threads': Success
+Running test 'Threads WinAPI': Success
+Running test 'Environment': Success
+Running test 'Exceptions': Success
+Running test 'Native Exceptions': Success
+Running test 'Interrupts': Success
+Running test 'TLS': Success
+Running test 'Socket': Success
+Running test 'APC': Success
+Running test 'User Callback': Success
+Running test 'Message Queue': Success
+Emulation terminated with status: 0
+```
+
+### Running Your Own Program
+
+To emulate your own Windows executable:
+
+```bash
+analyzer.exe C:\path\to\your\program.exe
+```
+
+### With Arguments
+
+Pass arguments to the emulated program:
+
+```bash
+analyzer.exe C:\program.exe arg1 arg2 arg3
+```
+
+## Common Options
+
+Here are some useful command-line options:
+
+<CodeGroup>
+
+```bash Verbose Logging
+# See detailed execution information
+analyzer.exe -v C:\program.exe
+```
+
+```bash Debug with GDB
+# Launch GDB server on port 28960
+analyzer.exe -d --port 28960 C:\program.exe
+
+# Then connect with IDA Pro, GDB, or VS Code
+```
+
+```bash Track Specific Module
+# Monitor a specific DLL's behavior
+analyzer.exe -m user32.dll -v C:\program.exe
+```
+
+```bash Monitor Executable Access
+# Log read/write access to executable memory
+analyzer.exe -x C:\program.exe
+```
+
+```bash Custom Emulation Root
+# Use a custom file system root
+analyzer.exe -e C:\emulation_root C:\program.exe
+```
+
+```bash Silent Mode
+# Suppress most output
+analyzer.exe -s C:\program.exe
+```
+
+</CodeGroup>
+
+## Understanding the Output
+
+By default, Sogen displays:
+
+1. **Emulator backend**: Which CPU emulation engine is being used (Unicorn or Icicle)
+2. **Execution logs**: System calls, API calls, and other notable events
+3. **Exit status**: The program's exit code (0 = success)
+
+### Example Output Analysis
+
+```text
+Using emulator backend: unicorn
+Loaded module: C:\program.exe at 0x140000000
+Loaded module: C:\Windows\System32\ntdll.dll at 0x7FFE0000
+Loaded module: C:\Windows\System32\kernel32.dll at 0x7FFD0000
+Thread 1234 started
+Emulation terminated with status: 0
+```
+
+This shows:
+- The emulator backend in use
+- Which modules (EXE and DLLs) were loaded and their base addresses
+- Thread creation
+- Successful termination (status 0)
+
+## Debugging with GDB
+
+Sogen supports the GDB remote protocol, enabling debugging with popular tools:
+
+<Steps>
+  <Step title="Start Sogen in Debug Mode">
+    ```bash
+    analyzer.exe -d --port 28960 C:\program.exe
+    ```
+    
+    The emulator will wait for a debugger to connect.
+  </Step>
+  
+  <Step title="Connect with Your Debugger">
+    <CodeGroup>
+    
+    ```bash GDB
+    gdb
+    (gdb) target remote localhost:28960
+    (gdb) continue
+    ```
+    
+    ```bash IDA Pro
+    Debugger -> Attach -> Remote GDB debugger
+    Hostname: localhost
+    Port: 28960
+    ```
+    
+    ```json VS Code (launch.json)
+    {
+      "type": "cppdbg",
+      "request": "launch",
+      "name": "Attach to Sogen",
+      "miDebuggerServerAddress": "localhost:28960",
+      "miDebuggerPath": "/path/to/gdb"
+    }
+    ```
+    
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Debug as Normal">
+    Set breakpoints, step through code, inspect memory, and use all standard debugging features.
+  </Step>
+</Steps>
+
+## What's Emulated?
+
+Sogen emulates a comprehensive Windows environment including:
+
+- **File System**: Virtual file system with path mapping
+- **Registry**: Full registry access from dumped hives
+- **Threading**: Multi-threading with synchronization primitives
+- **Exceptions**: SEH (Structured Exception Handling)
+- **Memory**: Virtual memory allocation and protection
+- **Networking**: Socket operations (UDP/TCP)
+- **Time**: System time and timers
+- **User Interface**: Basic window messaging (HWND_MESSAGE)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Installation Guide"
+    icon="download"
+    href="/installation"
+  >
+    Learn how to build Sogen on Linux, macOS, and other platforms
+  </Card>
+  
+  <Card
+    title="Advanced Usage"
+    icon="gears"
+  >
+    Explore advanced features like state snapshots, Tenet tracing, and custom hooks
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### "Registry not found" Error
+
+Make sure the `registry` folder is in the same directory as `analyzer.exe`, or specify its path:
+
+```bash
+analyzer.exe -r C:\path\to\registry C:\program.exe
+```
+
+### "Failed to load module" Error
+
+Ensure the program is a valid 64-bit Windows PE executable. Sogen currently focuses on x64 emulation.
+
+### Crashes or Unexpected Behavior
+
+Try running with verbose logging to see what's happening:
+
+```bash
+analyzer.exe -v C:\program.exe
+```
+
+If you encounter bugs, please report them on [GitHub Issues](https://github.com/momo5502/sogen/issues).

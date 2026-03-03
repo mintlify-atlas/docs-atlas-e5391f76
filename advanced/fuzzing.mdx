@@ -1,0 +1,299 @@
+---
+title: Fuzzing Engine
+description: Guide to using Sogen's built-in fuzzing capabilities for automated vulnerability discovery
+---
+
+# Fuzzing Engine
+
+Sogen includes a powerful fuzzing engine that leverages its snapshot and state management capabilities to perform high-performance coverage-guided fuzzing of Windows applications.
+
+## Overview
+
+The fuzzing engine works by:
+1. Emulating the target application to a specific point (the target function)
+2. Creating a snapshot of the emulator state
+3. Spawning multiple fuzzer instances across CPU cores
+4. Each instance restores the snapshot, injects fuzzed input, and tracks code coverage
+5. Crashes and new coverage paths are automatically detected
+
+## Fuzzer Executable
+
+Sogen provides a dedicated `fuzzer.exe` utility for fuzzing applications. The fuzzer requires the Rust-based Icicle backend to be enabled at compile time.
+
+### Basic Usage
+
+```bash
+fuzzer.exe <target_application>
+```
+
+### Command Line Options
+
+```bash
+# Run with debugging support
+fuzzer.exe -d <target_application>
+```
+
+The `-d` flag enables GDB stub integration, allowing you to attach a debugger to inspect crashes.
+
+## How the Fuzzing Engine Works
+
+### 1. Target Function Setup
+
+The fuzzer looks for an exported function named `vulnerable` in your target executable:
+
+```cpp
+// From src/fuzzer/main.cpp:63-69
+void forward_emulator(windows_emulator& win_emu)
+{
+    const auto target = win_emu.mod_manager.executable->find_export("vulnerable");
+    win_emu.emu().hook_memory_execution(target, [&](uint64_t) {
+        win_emu.emu().stop();
+    });
+    run_emulation(win_emu);
+}
+```
+
+The emulator runs until it hits the `vulnerable` function, then stops and captures the state.
+
+### 2. State Serialization
+
+The entire emulator state is serialized and shared across fuzzer instances:
+
+```cpp
+// From src/fuzzer/main.cpp:158-161
+utils::buffer_serializer serializer{};
+base_emulator.serialize(serializer);
+my_fuzzing_handler handler{serializer.move_buffer()};
+fuzzer::run(handler, concurrency);
+```
+
+### 3. Parallel Execution
+
+The fuzzer spawns multiple workers based on CPU core count:
+
+```cpp
+// From src/fuzzer/main.cpp:156
+const auto concurrency = std::thread::hardware_concurrency() + 4;
+```
+
+Each worker gets its own emulator instance restored from the snapshot.
+
+### 4. Input Injection
+
+Fuzzed data is injected via registers before execution:
+
+```cpp
+// From src/fuzzer/main.cpp:114-119
+const auto memory = emu.memory.allocate_memory(
+    static_cast<size_t>(page_align_up(std::max(data.size(), static_cast<size_t>(1)))),
+    memory_permission::read_write);
+emu.emu().write_memory(memory, data.data(), data.size());
+emu.emu().reg(x86_register::rcx, memory);      // First argument: buffer pointer
+emu.emu().reg<uint64_t>(x86_register::rdx, data.size());  // Second argument: size
+```
+
+This follows the Windows x64 calling convention where:
+- `RCX` = pointer to fuzzed input buffer
+- `RDX` = size of fuzzed input
+
+### 5. Coverage Tracking
+
+The fuzzer tracks which basic blocks have been executed:
+
+```cpp
+// From src/fuzzer/main.cpp:81-86
+emu.emu().hook_basic_block([&](const basic_block& block) {
+    if (this->handler && visited_blocks.emplace(block.address).second) {
+        (*this->handler)(block.address);
+    }
+});
+```
+
+New basic blocks are reported to the fuzzing engine to guide input generation.
+
+### 6. Crash Detection
+
+Exceptions and crashes are automatically caught:
+
+```cpp
+// From src/fuzzer/main.cpp:38-41
+win_emu.callbacks.on_exception = [&] {
+    has_exception = true;
+    win_emu.stop();
+};
+```
+
+## Implementing a Fuzzable Target
+
+To make your application fuzzable with Sogen:
+
+### 1. Export a Target Function
+
+```cpp
+// In your DLL or EXE
+extern "C" __declspec(dllexport) void vulnerable(const uint8_t* data, size_t size)
+{
+    // Your code to fuzz
+    // This function receives the fuzzed input
+    processInput(data, size);
+}
+```
+
+### 2. Compile Your Target
+
+Build your target application as a standard Windows executable or DLL with the `vulnerable` export.
+
+### 3. Run the Fuzzer
+
+```bash
+fuzzer.exe your_target.exe
+```
+
+The fuzzer will:
+- Load your executable
+- Run until the `vulnerable` function
+- Take a snapshot
+- Start fuzzing with automatic input generation
+
+## Fuzzer Architecture
+
+### Executer Interface
+
+Each fuzzer worker implements the `fuzzer::executer` interface:
+
+```cpp
+// From src/fuzzing-engine/fuzzer.hpp:18-23
+struct executer
+{
+    virtual ~executer() = default;
+    virtual execution_result execute(
+        std::span<const uint8_t> data,
+        const std::function<coverage_functor>& coverage_handler) = 0;
+};
+```
+
+### Fuzzing Handler
+
+The main fuzzing logic implements `fuzzer::fuzzing_handler`:
+
+```cpp
+// From src/fuzzing-engine/fuzzer.hpp:25-35
+struct fuzzing_handler
+{
+    virtual ~fuzzing_handler() = default;
+    virtual std::unique_ptr<executer> make_executer() = 0;
+    virtual bool stop() { return false; }
+};
+```
+
+## Performance Optimization
+
+### Snapshot vs. Deserialization
+
+The fuzzer uses fast in-memory snapshots instead of full deserialization:
+
+```cpp
+// From src/fuzzer/main.cpp:88-103
+utils::buffer_deserializer deserializer{emulator_data};
+emu.deserialize(deserializer);
+emu.save_snapshot();  // Create fast snapshot
+
+// Later, for each iteration:
+void restore_emulator() {
+    emu.restore_snapshot();  // Fast restore from memory
+}
+```
+
+This provides significantly faster reset times compared to full state deserialization.
+
+### Memory Management
+
+The fuzzer allocates memory for each input and cleans up automatically:
+
+```cpp
+// From src/fuzzer/main.cpp:114-116
+const auto memory = emu.memory.allocate_memory(
+    static_cast<size_t>(page_align_up(std::max(data.size(), static_cast<size_t>(1)))),
+    memory_permission::read_write);
+```
+
+## Backend Requirements
+
+The fuzzer requires the Icicle backend (Rust-based emulation):
+
+```cpp
+// From src/fuzzer/main.cpp:20-27
+std::unique_ptr<x86_64_emulator> create_emulator_backend()
+{
+#if MOMO_ENABLE_RUST_CODE
+    return icicle::create_x86_64_emulator();
+#else
+    throw std::runtime_error("Fuzzer requires rust code to be enabled");
+#endif
+}
+```
+
+See the [Custom Backends](/advanced/custom-backends) page for build configuration details.
+
+## Example: Fuzzing a Parser
+
+Here's a complete example of a fuzzable parser:
+
+```cpp
+// parser.cpp
+#include <cstdint>
+#include <cstring>
+
+extern "C" __declspec(dllexport) void vulnerable(const uint8_t* data, size_t size)
+{
+    if (size < 4) return;
+    
+    // Intentional vulnerability for demonstration
+    char buffer[16];
+    if (data[0] == 'F' && data[1] == 'U' && data[2] == 'Z' && data[3] == 'Z') {
+        // This will crash if size > 16
+        memcpy(buffer, data, size);
+    }
+}
+```
+
+Compile and fuzz:
+
+```bash
+cl.exe /LD parser.cpp /Fe:parser.dll
+fuzzer.exe parser.dll
+```
+
+The fuzzer will discover the crash when it generates input starting with "FUZZ" and larger than 16 bytes.
+
+## Troubleshooting
+
+### "Fuzzer requires rust code to be enabled"
+
+You need to build Sogen with Rust support enabled:
+
+```bash
+cmake --preset=vs2022 -DMOMO_ENABLE_RUST_CODE=ON
+```
+
+### No Coverage Increase
+
+Ensure:
+- Your `vulnerable` function is actually being called
+- The function performs different operations based on input
+- The emulator isn't hitting infinite loops
+
+### Out of Memory
+
+Reduce concurrency:
+
+```cpp
+// Modify src/fuzzer/main.cpp:156
+const auto concurrency = std::thread::hardware_concurrency() / 2;
+```
+
+## Next Steps
+
+- Learn about [State Management](/advanced/state-management) for understanding snapshots
+- Explore [Custom Backends](/advanced/custom-backends) for Icicle configuration
+- Use [GDB Integration](/advanced/gdb-integration) to debug crashes found by the fuzzer

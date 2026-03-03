@@ -1,0 +1,389 @@
+---
+title: 'syscall_dispatcher'
+description: 'System call dispatching and callback handling for Windows NT syscalls'
+---
+
+The `syscall_dispatcher` class routes Windows NT system calls to their handler implementations and manages asynchronous completion callbacks.
+
+## Overview
+
+This class provides:
+
+- System call routing based on syscall number
+- Handler registration from ntdll.dll and win32u.dll exports
+- Asynchronous callback completion handling
+- Serialization support for syscall state
+- Completion state management for multi-step operations
+
+## Enums
+
+### dispatch_result
+
+Result of a syscall or callback dispatch operation.
+
+```cpp
+enum class dispatch_result
+{
+    completed,      // Operation completed successfully
+    new_callback,   // New callback was registered
+    error          // Error occurred during dispatch
+};
+```
+
+## Types
+
+### syscall_handler
+
+Function pointer type for syscall handlers.
+
+```cpp
+using syscall_handler = void (*)(const syscall_context& c);
+```
+
+### syscall_handler_entry
+
+Entry in the syscall handler table.
+
+```cpp
+struct syscall_handler_entry
+{
+    syscall_handler handler{};
+    std::string name{};
+};
+```
+
+<ParamField path="handler" type="syscall_handler">
+  Function pointer to the syscall implementation
+</ParamField>
+
+<ParamField path="name" type="std::string">
+  Name of the syscall (e.g., "NtCreateFile")
+</ParamField>
+
+## Completion State Classes
+
+Completion states track multi-step asynchronous operations.
+
+### completion_state
+
+Base class for all completion states.
+
+```cpp
+struct completion_state
+{
+    virtual ~completion_state() = default;
+    void serialize(utils::buffer_serializer& buffer) const;
+    void deserialize(utils::buffer_deserializer& buffer);
+};
+```
+
+### window_create_state
+
+Tracks window creation callbacks.
+
+```cpp
+struct window_create_state : completion_state
+{
+    hwnd handle{};
+    emulator_stack_allocation min_max_info_alloc{};
+    emulator_stack_allocation window_rect_alloc{};
+    emulator_stack_allocation create_struct_alloc{};
+    emulator_stack_allocation window_pos_alloc{};
+    std::vector<qmsg> message_queue{};
+};
+```
+
+<ParamField path="handle" type="hwnd">
+  Window handle being created
+</ParamField>
+
+<ParamField path="min_max_info_alloc" type="emulator_stack_allocation">
+  Stack allocation for MINMAXINFO structure
+</ParamField>
+
+<ParamField path="window_rect_alloc" type="emulator_stack_allocation">
+  Stack allocation for window rectangle
+</ParamField>
+
+<ParamField path="create_struct_alloc" type="emulator_stack_allocation">
+  Stack allocation for CREATESTRUCT
+</ParamField>
+
+<ParamField path="window_pos_alloc" type="emulator_stack_allocation">
+  Stack allocation for WINDOWPOS structure
+</ParamField>
+
+<ParamField path="message_queue" type="std::vector<qmsg>">
+  Pending window messages
+</ParamField>
+
+### window_destroy_state
+
+Tracks window destruction callbacks.
+
+```cpp
+struct window_destroy_state : completion_state
+{
+    emulator_stack_allocation window_pos_alloc{};
+    std::vector<qmsg> message_queue{};
+};
+```
+
+### window_show_state
+
+Tracks window show/hide callbacks.
+
+```cpp
+struct window_show_state : completion_state
+{
+    bool was_visible{};
+    emulator_stack_allocation window_pos_alloc{};
+    std::vector<qmsg> message_queue{};
+};
+```
+
+<ParamField path="was_visible" type="bool">
+  Whether the window was visible before the operation
+</ParamField>
+
+## Constructor
+
+```cpp
+syscall_dispatcher()
+
+syscall_dispatcher(
+    const exported_symbols& ntdll_exports,
+    std::span<const std::byte> ntdll_data,
+    const exported_symbols& win32u_exports,
+    std::span<const std::byte> win32u_data
+)
+```
+
+<ParamField path="ntdll_exports" type="const exported_symbols&">
+  Exported symbols from ntdll.dll
+</ParamField>
+
+<ParamField path="ntdll_data" type="std::span<const std::byte>">
+  Raw data from ntdll.dll (for extracting syscall numbers)
+</ParamField>
+
+<ParamField path="win32u_exports" type="const exported_symbols&">
+  Exported symbols from win32u.dll
+</ParamField>
+
+<ParamField path="win32u_data" type="std::span<const std::byte>">
+  Raw data from win32u.dll
+</ParamField>
+
+The constructor extracts syscall numbers from the native DLL code and builds the handler table.
+
+## Methods
+
+### setup
+
+Initializes or reinitializes the dispatcher with module exports.
+
+```cpp
+void setup(
+    const exported_symbols& ntdll_exports,
+    std::span<const std::byte> ntdll_data,
+    const exported_symbols& win32u_exports,
+    std::span<const std::byte> win32u_data
+)
+```
+
+<ParamField path="ntdll_exports" type="const exported_symbols&">
+  ntdll.dll exports
+</ParamField>
+
+<ParamField path="ntdll_data" type="std::span<const std::byte>">
+  ntdll.dll binary data
+</ParamField>
+
+<ParamField path="win32u_exports" type="const exported_symbols&">
+  win32u.dll exports
+</ParamField>
+
+<ParamField path="win32u_data" type="std::span<const std::byte>">
+  win32u.dll binary data
+</ParamField>
+
+### dispatch
+
+Dispatches a system call from the emulated code.
+
+```cpp
+void dispatch(windows_emulator& win_emu)
+```
+
+<ParamField path="win_emu" type="windows_emulator&">
+  Windows emulator instance with CPU state
+</ParamField>
+
+This method:
+1. Extracts the syscall number from the CPU registers
+2. Looks up the corresponding handler
+3. Invokes the handler with the syscall context
+4. Updates the CPU state with the return value
+
+### dispatch_callback
+
+Dispatches a callback invocation (static method).
+
+```cpp
+static void dispatch_callback(
+    windows_emulator& win_emu,
+    std::string& syscall_name
+)
+```
+
+<ParamField path="win_emu" type="windows_emulator&">
+  Windows emulator instance
+</ParamField>
+
+<ParamField path="syscall_name" type="std::string&">
+  Name of the syscall that triggered the callback
+</ParamField>
+
+Used when the emulated code calls back into the emulator (e.g., window procedures).
+
+### dispatch_completion
+
+Dispatches completion of an asynchronous operation.
+
+```cpp
+dispatch_result dispatch_completion(
+    windows_emulator& win_emu,
+    callback_id callback_id,
+    completion_state* completion_state,
+    uint64_t callback_result
+)
+```
+
+<ParamField path="win_emu" type="windows_emulator&">
+  Windows emulator instance
+</ParamField>
+
+<ParamField path="callback_id" type="callback_id">
+  ID identifying the type of callback
+</ParamField>
+
+<ParamField path="completion_state" type="completion_state*">
+  State object tracking the operation
+</ParamField>
+
+<ParamField path="callback_result" type="uint64_t">
+  Result value from the callback
+</ParamField>
+
+**Returns:** `dispatch_result` indicating the outcome.
+
+### get_syscall_name
+
+Retrieves the name of a syscall by its number.
+
+```cpp
+std::string get_syscall_name(const uint64_t id)
+```
+
+<ParamField path="id" type="uint64_t">
+  Syscall number
+</ParamField>
+
+**Returns:** Name of the syscall (e.g., "NtCreateFile").
+
+### create_completion_state
+
+Factory method for creating completion state objects.
+
+```cpp
+static std::unique_ptr<completion_state> create_completion_state(
+    callback_id id
+)
+```
+
+<ParamField path="id" type="callback_id">
+  Callback ID
+</ParamField>
+
+**Returns:** New completion state object, or `nullptr` if none is registered for this callback.
+
+### Serialization
+
+```cpp
+void serialize(utils::buffer_serializer& buffer) const
+void deserialize(utils::buffer_deserializer& buffer)
+```
+
+Serialization support for saving/loading dispatcher state.
+
+## Usage Example
+
+```cpp
+// Initialize the dispatcher
+syscall_dispatcher dispatcher(
+    ntdll->exports,
+    ntdll->image_data,
+    win32u->exports,
+    win32u->image_data
+);
+
+// Later, when a syscall instruction is executed:
+dispatcher.dispatch(windows_emu);
+
+// Handle callback completion
+auto create_state = std::make_unique<window_create_state>();
+create_state->handle = hwnd{0x12345};
+
+auto result = dispatcher.dispatch_completion(
+    windows_emu,
+    callback_id::window_create,
+    create_state.get(),
+    1  // callback succeeded
+);
+
+if (result == dispatch_result::completed) {
+    printf("Window creation completed\n");
+} else if (result == dispatch_result::new_callback) {
+    printf("Another callback was scheduled\n");
+}
+
+// Look up syscall name for logging
+auto name = dispatcher.get_syscall_name(0x55);
+printf("Syscall 0x55 is: %s\n", name.c_str());
+```
+
+## Syscall Context
+
+When a syscall handler is invoked, it receives a `syscall_context` structure containing:
+
+```cpp
+struct syscall_context
+{
+    windows_emulator* emu;      // Emulator instance
+    process_context* proc;      // Process context
+    emulator_thread* thread;    // Current thread
+    uint64_t syscall_number;    // Syscall number
+    // CPU registers available via emu->reg()
+};
+```
+
+Handlers can:
+- Read syscall arguments from registers or stack
+- Access process resources via `proc`
+- Modify thread state via `thread`
+- Set return value via `emu->reg(x64_register::rax, value)`
+
+## Callback Flow
+
+1. **Syscall initiation**: User code executes `syscall` instruction
+2. **Handler invocation**: Dispatcher calls the registered handler
+3. **Callback registration**: Handler may register a callback (e.g., window procedure)
+4. **Callback execution**: Emulator calls into user code
+5. **Completion dispatch**: Handler processes callback result
+6. **Return**: Final result returned to user code
+
+## See Also
+
+- [process_context](/api/process-context) - Process state and resources
+- [module_manager](/api/module-manager) - Module management for extracting syscall tables

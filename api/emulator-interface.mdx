@@ -1,0 +1,173 @@
+---
+title: 'emulator'
+description: 'Base emulator interface combining CPU, memory, and hook capabilities'
+---
+
+## Overview
+
+The `emulator` class is the base interface for all emulator implementations in Sogen. It combines three core interfaces:
+- `cpu_interface` - CPU register and execution control
+- `memory_interface` - Memory read/write operations  
+- `hook_interface` - Event hooks for monitoring and control
+
+## Class Definition
+
+```cpp
+class emulator : public cpu_interface, 
+                 public memory_interface, 
+                 public hook_interface
+```
+
+This abstract base class defines the contract that all emulator implementations must fulfill.
+
+**Source:** emulator.hpp:9
+
+## Constructors and Assignment
+
+The emulator class is non-copyable and non-movable:
+
+```cpp
+emulator() = default;
+~emulator() override = default;
+
+emulator(const emulator&) = delete;
+emulator& operator=(const emulator&) = delete;
+
+emulator(emulator&&) = delete;
+emulator& operator=(emulator&&) = delete;
+```
+
+## Pure Virtual Methods
+
+### get_name()
+
+```cpp
+virtual std::string get_name() const = 0
+```
+
+Returns the name of the emulator implementation.
+
+**Returns:** String identifier for the emulator (e.g., "unicorn", "qemu")
+
+**Source:** emulator.hpp:21
+
+### serialize_state()
+
+```cpp
+virtual void serialize_state(
+    utils::buffer_serializer& buffer,
+    bool is_snapshot
+) const = 0
+```
+
+Serializes the emulator state to a buffer.
+
+<ParamField path="buffer" type="utils::buffer_serializer&" required>
+  Buffer to write the serialized state to
+</ParamField>
+
+<ParamField path="is_snapshot" type="bool" required>
+  Whether this is a snapshot (for quick rollback) or full serialization
+</ParamField>
+
+**Source:** emulator.hpp:23
+
+### deserialize_state()
+
+```cpp
+virtual void deserialize_state(
+    utils::buffer_deserializer& buffer,
+    bool is_snapshot
+) = 0
+```
+
+Deserializes the emulator state from a buffer.
+
+<ParamField path="buffer" type="utils::buffer_deserializer&" required>
+  Buffer to read the serialized state from
+</ParamField>
+
+<ParamField path="is_snapshot" type="bool" required>
+  Whether this is a snapshot (for quick rollback) or full deserialization
+</ParamField>
+
+**Source:** emulator.hpp:24
+
+## Inherited Interfaces
+
+The emulator class inherits methods from three interfaces:
+
+### From cpu_interface
+
+- `start(size_t count)` - Start CPU execution
+- `stop()` - Stop CPU execution
+- `read_raw_register()` - Read CPU register values
+- `write_raw_register()` - Write CPU register values
+- `save_registers()` - Save all registers to a buffer
+- `restore_registers()` - Restore registers from a buffer
+- `read_descriptor_table()` - Read descriptor table registers (GDTR, IDTR, etc.)
+- `has_violation()` - Check if a memory violation occurred
+
+See the CPU interface documentation for details.
+
+### From memory_interface
+
+- `read_memory()` - Read memory at an address
+- `try_read_memory()` - Attempt to read memory without throwing
+- `write_memory()` - Write memory at an address
+- `try_write_memory()` - Attempt to write memory without throwing
+- `move_memory()` - Move memory from one location to another
+
+See the [memory interface](/api/memory-interface) documentation for details.
+
+### From hook_interface
+
+- `hook_memory_execution()` - Hook memory execution
+- `hook_memory_read()` - Hook memory read operations
+- `hook_memory_write()` - Hook memory write operations
+- `hook_instruction()` - Hook specific instruction types
+- `hook_interrupt()` - Hook interrupts
+- `hook_memory_violation()` - Hook memory access violations
+- `hook_basic_block()` - Hook basic block execution
+- `delete_hook()` - Remove a hook
+
+See the hook interface documentation for details.
+
+## Usage Example
+
+```cpp
+// Emulator is an abstract base class
+// Use a concrete implementation like x86_64_emulator
+
+std::unique_ptr<emulator> emu = create_x86_64_emulator();
+
+// Get emulator name
+std::string name = emu->get_name();
+printf("Using emulator: %s\n", name.c_str());
+
+// Serialize state
+utils::buffer_serializer serializer;
+emu->serialize_state(serializer, false);
+
+// ... later, restore state
+utils::buffer_deserializer deserializer(serializer.data());
+emu->deserialize_state(deserializer, false);
+
+// Use inherited interfaces
+emu->write_memory(0x1000, my_data, sizeof(my_data));
+emu->start(1000); // Execute 1000 instructions
+```
+
+## Implementation Notes
+
+- Implementations must provide thread-safe state serialization
+- The `is_snapshot` parameter allows optimizations for temporary state saves
+- Snapshots may exclude persistent state like module mappings
+- Full serialization should capture all state needed to resume execution
+- The emulator name should be a unique, stable identifier for the backend
+
+## Related Types
+
+See also:
+- [memory_interface](/api/memory-interface) - Memory operations
+- [emulator_callbacks](/api/callbacks) - Event callbacks for monitoring
