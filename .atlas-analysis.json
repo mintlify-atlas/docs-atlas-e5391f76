@@ -1,0 +1,101 @@
+{
+  "projectType": "general",
+  "projectName": "Sogen",
+  "projectDescription": "High-performance Windows user space emulator operating at syscall level for security research and malware analysis",
+  "theme": "aspen",
+  "primaryColor": "#00B0F8",
+  "lightColor": null,
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/syscall-emulation",
+              "concepts/memory-management",
+              "concepts/threading",
+              "concepts/exception-handling"
+            ]
+          },
+          {
+            "group": "Usage Guide",
+            "pages": [
+              "guides/running-programs",
+              "guides/configuration",
+              "guides/debugging",
+              "guides/web-playground"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/fuzzing",
+              "advanced/gdb-integration",
+              "advanced/state-management",
+              "advanced/custom-backends"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api/windows-emulator",
+              "api/emulator-interface",
+              "api/memory-interface",
+              "api/callbacks"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "api/process-context",
+              "api/module-manager",
+              "api/syscall-dispatcher",
+              "api/file-system"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Syscall-level emulation leveraging native Windows DLLs",
+    "Advanced memory management with Windows-specific types",
+    "Complete PE loading with relocations and TLS",
+    "Windows structured exception handling (SEH)",
+    "Scheduled threading model",
+    "State serialization and snapshots",
+    "GDB protocol debugging interface",
+    "Multiple emulator backends (Unicorn, Icicle)"
+  ],
+  "publicApiSurface": [
+    "windows_emulator",
+    "emulator_callbacks",
+    "emulator_settings",
+    "application_settings",
+    "x86_64_emulator",
+    "memory_interface",
+    "process_context",
+    "module_manager",
+    "syscall_dispatcher",
+    "analyzer.exe (CLI tool)",
+    "fuzzer.exe (CLI tool)",
+    "GDB stub interface"
+  ]
+}
